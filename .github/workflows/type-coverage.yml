@@ -1,0 +1,23 @@
+name: type-coverage
+
+on: [push, pull_request]
+
+jobs:
+  type-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          coverage: none
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@v4
+
+      - name: Check type coverage
+        run: vendor/bin/pest --type-coverage --min=100

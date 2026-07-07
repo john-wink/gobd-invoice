@@ -1,0 +1,45 @@
+name: 🐛 Bug Report
+description: Report a reproducible problem in gobd-invoice
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file a bug report!
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug, including the expected behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Steps or a minimal code snippet that reproduces the issue.
+    validations:
+      required: true
+  - type: input
+    id: package-version
+    attributes:
+      label: Package version
+    validations:
+      required: true
+  - type: input
+    id: php-version
+    attributes:
+      label: PHP version (8.4 / 8.5)
+    validations:
+      required: true
+  - type: input
+    id: laravel-version
+    attributes:
+      label: Laravel version
+    validations:
+      required: true
+  - type: checkboxes
+    id: compliance
+    attributes:
+      label: Compliance relevance
+      options:
+        - label: This bug could affect GoBD compliance (immutability, audit trail, numbering, retention, e-invoice validity)

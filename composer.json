@@ -1,0 +1,102 @@
+{
+    "name": "john-wink/gobd-invoice",
+    "description": "GoBD-compliant German business-document engine (Rechnung, Angebot, Kostenvoranschlag, Storno, Leistungsnachweis, e-invoice) for Laravel.",
+    "keywords": [
+        "laravel",
+        "gobd",
+        "invoice",
+        "rechnung",
+        "xrechnung",
+        "zugferd",
+        "factur-x",
+        "e-rechnung",
+        "ustg",
+        "germany"
+    ],
+    "homepage": "https://github.com/john-wink/gobd-invoice",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "John Wink",
+            "email": "john-coding@ys.consulting",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/john-wink/gobd-invoice/issues",
+        "source": "https://github.com/john-wink/gobd-invoice"
+    },
+    "require": {
+        "php": "^8.4",
+        "ext-bcmath": "*",
+        "illuminate/contracts": "^13.0",
+        "spatie/laravel-package-tools": "^1.92"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.18",
+        "nunomaduro/collision": "^8.8",
+        "orchestra/testbench": "^11.0",
+        "pestphp/pest": "^4.0",
+        "pestphp/pest-plugin-arch": "^4.0",
+        "pestphp/pest-plugin-laravel": "^4.0",
+        "pestphp/pest-plugin-mutate": "^4.0",
+        "pestphp/pest-plugin-type-coverage": "^4.0",
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan-deprecation-rules": "^2.0",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "rector/rector": "^2.5",
+        "driftingly/rector-laravel": "^2.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "JohnWink\\GobdInvoice\\": "src/",
+            "JohnWink\\GobdInvoice\\Database\\Factories\\": "database/factories/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JohnWink\\GobdInvoice\\Tests\\": "tests/",
+            "Workbench\\App\\": "workbench/app/",
+            "Workbench\\Database\\Factories\\": "workbench/database/factories/"
+        }
+    },
+    "scripts": {
+        "post-autoload-dump": "@php vendor/bin/testbench package:discover --ansi",
+        "analyse": "vendor/bin/phpstan analyse",
+        "test": "vendor/bin/pest",
+        "test:parallel": "vendor/bin/pest --parallel",
+        "test:coverage": "vendor/bin/pest --coverage --min=90",
+        "test:types": "vendor/bin/pest --type-coverage --min=100",
+        "test:mutate": "vendor/bin/pest --mutate --parallel --covered-only --min=90",
+        "format": "vendor/bin/pint",
+        "lint": "vendor/bin/pint --test",
+        "rector": "vendor/bin/rector process",
+        "rector:check": "vendor/bin/rector process --dry-run",
+        "qa": [
+            "@lint",
+            "@rector:check",
+            "@analyse",
+            "@test:parallel"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "phpstan/extension-installer": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "JohnWink\\GobdInvoice\\GobdInvoiceServiceProvider"
+            ],
+            "aliases": {
+                "GobdInvoice": "JohnWink\\GobdInvoice\\Facades\\GobdInvoice"
+            }
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

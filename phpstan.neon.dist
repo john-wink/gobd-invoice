@@ -1,0 +1,12 @@
+parameters:
+    level: max
+    paths:
+        - src
+        - config
+        - database
+    treatPhpDocTypesAsCertain: false
+    checkModelProperties: true
+    checkOctaneCompatibility: false
+    tmpDir: build/phpstan
+    # Greenfield package: no baseline. Fix every error; never suppress.
+    # See docs/research/09-tooling-and-quality-gates.md
