@@ -24,8 +24,11 @@ namespace JohnWink\GobdInvoice\ValueObjects;
  * | amountDue       | BT-115 | amount due = BT-112 − BT-113 + BT-114              |
  *
  * The per-group Steuerausweis (BG-23: BT-116 base, BT-119 rate, BT-117 tax) lives
- * in {@see self::taxBreakdown}. See docs/research/06-money-tax-and-rounding.md
- * (Section 5).
+ * in {@see self::taxBreakdown}. When the invoice currency is not the VAT
+ * accounting currency (EUR for German VAT), the total VAT is additionally
+ * expressed in the accounting currency as {@see self::vatAccountingTotal}
+ * (BT-111), with the {@see self::accountingRate} retained for GoBD
+ * reproducibility. See docs/research/06-money-tax-and-rounding.md (Sections 5, 7).
  */
 final readonly class DocumentTotals
 {
@@ -41,5 +44,7 @@ final readonly class DocumentTotals
         public Money $roundingAmount,
         public Money $amountDue,
         public ?PaymentTerms $paymentTerms = null,
+        public ?Money $vatAccountingTotal = null,
+        public ?ExchangeRate $accountingRate = null,
     ) {}
 }

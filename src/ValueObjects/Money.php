@@ -78,7 +78,7 @@ final readonly class Money implements Stringable
     public function multipliedBy(int|string $factor): self
     {
         $factorString = (string) $factor;
-        throw_if(! is_numeric($factorString), InvalidArgumentException::class, "Invalid multiplier: [{$factorString}].");
+        $this->assertDecimal($factorString, 'Invalid multiplier');
 
         $product = bcmul((string) $this->minorUnits, $factorString, self::BC_SCALE);
 
@@ -92,7 +92,7 @@ final readonly class Money implements Stringable
      */
     public function percentage(string $rate): self
     {
-        throw_if(! is_numeric($rate), InvalidArgumentException::class, "Invalid percentage rate: [{$rate}].");
+        $this->assertDecimal($rate, 'Invalid percentage rate');
 
         $product = bcmul((string) $this->minorUnits, $rate, self::BC_SCALE);
         $divided = bcdiv($product, '100', self::BC_SCALE);
@@ -116,14 +116,36 @@ final readonly class Money implements Stringable
      */
     public function netFromGross(string $rate, string $quantity = '1'): self
     {
-        throw_if(! is_numeric($rate), InvalidArgumentException::class, "Invalid VAT rate: [{$rate}].");
-        throw_if(! is_numeric($quantity), InvalidArgumentException::class, "Invalid quantity: [{$quantity}].");
+        $this->assertDecimal($rate, 'Invalid VAT rate');
+        $this->assertDecimal($quantity, 'Invalid quantity');
 
         $grossExtension = bcmul((string) $this->minorUnits, $quantity, self::BC_SCALE);
         $denominator = bcadd('100', $rate, self::BC_SCALE);
         $net = bcdiv(bcmul($grossExtension, '100', self::BC_SCALE), $denominator, self::BC_SCALE);
 
         return new self($this->roundToInt($net), $this->currency);
+    }
+
+    /**
+     * Convert this amount into another currency at the given rate, rounding once
+     * to whole minor units. Used to express the VAT total in the accounting
+     * currency (EN 16931 BT-111) via the §16 Abs. 6 UStG conversion rate. The
+     * caller owns the (legally-prescribed) rate; the result is in the target
+     * currency.
+     *
+     * NOTE: minor units are multiplied by the rate directly, which is exact only
+     * when the source and target currency share this class's 2-decimal scale
+     * (true for EUR and the package's supported currencies). Currencies with a
+     * different minor-unit exponent (e.g. JPY) are not supported — see the
+     * SCALE constant. See docs/research/06-money-tax-and-rounding.md (Section 7).
+     */
+    public function convertedTo(string $currency, string $rate): self
+    {
+        $this->assertDecimal($rate, 'Invalid exchange rate');
+
+        $converted = bcmul((string) $this->minorUnits, $rate, self::BC_SCALE);
+
+        return new self($this->roundToInt($converted), $currency);
     }
 
     public function negated(): self
@@ -182,6 +204,19 @@ final readonly class Money implements Stringable
                 "Currency mismatch: [{$this->currency}] vs [{$other->currency}]."
             );
         }
+    }
+
+    /**
+     * Guard a rate/factor as a plain decimal string that BCMath accepts.
+     * is_numeric() is too loose: it admits scientific notation ("1e3"),
+     * leading/trailing whitespace and hex, which then make bcmul/bcdiv throw a
+     * raw ValueError rather than a meaningful InvalidArgumentException.
+     *
+     * @phpstan-assert numeric-string $value
+     */
+    private function assertDecimal(string $value, string $label): void
+    {
+        throw_if(preg_match('/^-?\d+(\.\d+)?$/', $value) !== 1, InvalidArgumentException::class, "{$label}: [{$value}].");
     }
 
     /**

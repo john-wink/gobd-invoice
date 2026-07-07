@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M2 multi-currency VAT (BT-111):** `ExchangeRate` value object +
+  `Money::convertedTo()`. When the invoice currency is not the VAT accounting
+  currency (EUR), `DocumentTotals` additionally carries the total VAT expressed
+  in EUR (EN 16931 BT-111), converting the already-rounded BT-110 once at the
+  supplied §16 Abs. 6 UStG rate and retaining the rate for GoBD reproducibility.
+  Rate values are host-supplied (the package does not fetch exchange rates).
 - **M2 §19 Kleinunternehmer rule:** `KleinunternehmerRule` contract +
   `ThresholdKleinunternehmerRule` + `KleinunternehmerAssessment` value object.
   Assesses §19 UStG exemption from prior-/current-year net turnover against the

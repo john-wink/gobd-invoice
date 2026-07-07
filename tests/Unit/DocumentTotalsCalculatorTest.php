@@ -6,6 +6,7 @@ use JohnWink\GobdInvoice\Enums\PriceMode;
 use JohnWink\GobdInvoice\Tax\GroupedDocumentTotalsCalculator;
 use JohnWink\GobdInvoice\ValueObjects\AllowanceCharge;
 use JohnWink\GobdInvoice\ValueObjects\DocumentTotals;
+use JohnWink\GobdInvoice\ValueObjects\ExchangeRate;
 use JohnWink\GobdInvoice\ValueObjects\LineInput;
 use JohnWink\GobdInvoice\ValueObjects\Money;
 use JohnWink\GobdInvoice\ValueObjects\PaymentTerms;
@@ -167,6 +168,27 @@ it('merges equivalently-written rates into one breakdown row and rounds once (BR
     expect($totals->taxBreakdown->lines)->toHaveCount(1)
         ->and($totals->netTotal->minorUnits)->toBe(6)
         ->and($totals->vatTotal->minorUnits)->toBe(1);
+});
+
+it('expresses the total VAT in the accounting currency for a non-EUR invoice (BT-111)', function (): void {
+    $totals = (new GroupedDocumentTotalsCalculator)->calculate(new TotalsInput(
+        [new LineInput(Money::fromMinorUnits(100000, 'USD'), '1', TaxRate::standard('19.0'))],
+        currency: 'USD',
+        accountingRate: new ExchangeRate('USD', 'EUR', '0.90'),
+    ));
+
+    expect($totals->vatTotal->minorUnits)->toBe(19000)               // 190.00 USD (BT-110)
+        ->and($totals->vatTotal->currency)->toBe('USD')
+        ->and($totals->vatAccountingTotal?->minorUnits)->toBe(17100) // 190.00 * 0.90 = 171.00 EUR (BT-111)
+        ->and($totals->vatAccountingTotal?->currency)->toBe('EUR')
+        ->and($totals->accountingRate?->quoteCurrency)->toBe('EUR');
+});
+
+it('has no accounting VAT total for a same-currency EUR invoice', function (): void {
+    $totals = totalsOf([new LineInput(Money::fromMinorUnits(10000), '1', TaxRate::standard('19.0'))]);
+
+    expect($totals->vatAccountingTotal)->toBeNull()
+        ->and($totals->accountingRate)->toBeNull();
 });
 
 it('produces an all-zero document for no lines', function (): void {

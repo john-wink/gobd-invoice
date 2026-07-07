@@ -7,6 +7,7 @@ namespace JohnWink\GobdInvoice\Tax;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
 use JohnWink\GobdInvoice\ValueObjects\DocumentTotals;
+use JohnWink\GobdInvoice\ValueObjects\ExchangeRate;
 use JohnWink\GobdInvoice\ValueObjects\Money;
 use JohnWink\GobdInvoice\ValueObjects\TotalsInput;
 
@@ -61,6 +62,14 @@ final readonly class GroupedDocumentTotalsCalculator implements DocumentTotalsCa
 
         $paidAmount = $totalsInput->paidAmount ?? Money::zero($currency);
 
+        // BT-111: when the invoice currency is not the accounting currency (EUR),
+        // also express the total VAT in the accounting currency, converting the
+        // already-rounded BT-110 once at the supplied rate (§16 Abs. 6 UStG).
+        $accountingRate = $totalsInput->accountingRate;
+        $vatAccountingTotal = $accountingRate instanceof ExchangeRate
+            ? $accountingRate->convert($taxBreakdown->vatTotal)
+            : null;
+
         return new DocumentTotals(
             lineNetTotal: $lineNetTotal,
             allowanceTotal: $allowanceTotal,
@@ -78,6 +87,8 @@ final readonly class GroupedDocumentTotalsCalculator implements DocumentTotalsCa
             // amounts, never re-rounded (REQ-10).
             amountDue: $taxBreakdown->grossTotal->minus($paidAmount),
             paymentTerms: $totalsInput->paymentTerms,
+            vatAccountingTotal: $vatAccountingTotal,
+            accountingRate: $accountingRate,
         );
     }
 }

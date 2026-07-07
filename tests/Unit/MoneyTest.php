@@ -62,6 +62,23 @@ it('extracts net from a gross unit price times a fractional quantity, rounding o
     expect(Money::fromMinorUnits(100)->netFromGross('19.0', '0.335')->minorUnits)->toBe(28);
 });
 
+it('converts to another currency at a rate, rounding once', function (): void {
+    // 100.00 USD * 0.92 = 92.00 EUR
+    expect(Money::fromMinorUnits(10000, 'USD')->convertedTo('EUR', '0.92')->minorUnits)->toBe(9200)
+        ->and(Money::fromMinorUnits(10000, 'USD')->convertedTo('EUR', '0.92')->currency)->toBe('EUR')
+        // 123.45 * 0.9 = 111.105 -> 111.11 (half away from zero)
+        ->and(Money::fromMinorUnits(12345, 'USD')->convertedTo('EUR', '0.9')->minorUnits)->toBe(11111);
+});
+
+it('rejects a non-numeric or scientific-notation exchange rate with a clear exception', function (): void {
+    expect(fn (): Money => Money::fromMinorUnits(10000, 'USD')->convertedTo('EUR', 'x'))
+        ->toThrow(InvalidArgumentException::class)
+        // is_numeric() would accept "1e3"; the strict guard must reject it here
+        // rather than leaking a raw bcmath ValueError.
+        ->and(fn (): Money => Money::fromMinorUnits(10000, 'USD')->convertedTo('EUR', '1e3'))
+        ->toThrow(InvalidArgumentException::class);
+});
+
 it('rejects non-numeric multipliers, percentages and rates instead of silently yielding zero', function (): void {
     // assert() is stripped in production (zend.assertions=-1); these must hard-throw.
     expect(fn (): Money => Money::fromMinorUnits(10000)->multipliedBy(''))->toThrow(InvalidArgumentException::class)

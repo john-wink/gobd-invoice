@@ -104,13 +104,13 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | Net/gross price modes, allowances & charges, full BT-106→BT-115 chain | ✅ M2 (engine) |
 | Effective-date §12 rate table (`TaxRateResolver`, Leistungszeitpunkt) | ✅ M2 (engine) |
 | §19 Kleinunternehmer rule (€25k/€100k limits, mid-year Fallbeil) | ✅ M2 (engine) |
+| Multi-currency VAT in EUR accounting currency (BT-111) | ✅ M2 (engine) |
 | Race-safe gapless sequential numbering | ✅ M1 |
 | Finalization: snapshot + SHA-256 content hash | ✅ M3 (core) |
 | Immutability guard + insert-only, hash-chained audit log | ✅ M3 (core) |
 | Storno / cancellation (Storno statt Löschen) | ✅ M3 (core) |
 | Retention window (`retention_until`, 8y/10y) | ✅ M1 |
 | Swappable models, config, events, driver managers | ✅ M0/M1 |
-| Multi-currency BT-111 (§16 Abs. 6 average rates) | 🚧 M2 |
 | PDF/A-3 rendering (dompdf / Gotenberg / Typst) | 🚧 M4 |
 | E-invoicing: ZUGFeRD / Factur-X / XRechnung (EN 16931) | 🚧 M5 |
 | Z1/Z2/Z3 (GDPdU) export, DATEV export, IKS hooks | 🚧 M6 |
