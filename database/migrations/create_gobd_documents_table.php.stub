@@ -1,0 +1,61 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create(config('gobd-invoice.table_names.documents', 'gobd_documents'), function (Blueprint $table): void {
+            $table->id();
+            $table->string('type')->index();
+            $table->string('status')->index();
+            $table->string('series')->nullable();
+            $table->string('number')->nullable()->unique();
+            $table->unsignedSmallInteger('year')->nullable();
+            $table->unsignedInteger('sequence')->nullable();
+            $table->string('currency', 3)->default('EUR');
+
+            // Monetary totals are stored as integer minor units, never floats.
+            $table->bigInteger('net_total')->nullable();
+            $table->bigInteger('vat_total')->nullable();
+            $table->bigInteger('gross_total')->nullable();
+            $table->json('tax_breakdown')->nullable();
+
+            $table->date('issue_date')->nullable();
+            $table->date('service_date')->nullable();
+
+            // Immutability / GoBD: snapshot + content hash captured at finalization.
+            $table->timestamp('finalized_at')->nullable();
+            $table->string('content_hash')->nullable();
+            $table->json('finalized_payload')->nullable();
+
+            // Storno / correction chains (Storno statt Löschen). A host app may
+            // add the self-referencing FK constraint; kept index-only here for
+            // cross-driver portability.
+            $table->unsignedBigInteger('source_document_id')->nullable()->index();
+
+            // Optional link to a host-app model (customer, order, …).
+            $table->nullableMorphs('documentable');
+
+            // Retention (Aufbewahrung): voucher 8y, financial-sector 10y, …
+            $table->string('retention_class')->default('voucher');
+            $table->date('retention_until')->nullable();
+            $table->boolean('is_financial_sector')->default(false);
+
+            $table->json('meta')->nullable();
+            $table->timestamps();
+
+            $table->index(['type', 'year', 'sequence']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists(config('gobd-invoice.table_names.documents', 'gobd_documents'));
+    }
+};
