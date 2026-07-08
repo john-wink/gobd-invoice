@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M5 e-invoicing — ZUGFeRD / Factur-X / XRechnung CII export (EN 16931):** an
+  `EInvoiceSerializer` contract and a `ZugferdCiiSerializer` that map a finalized
+  document to EN 16931 Cross-Industry-Invoice XML via `horstoeko/zugferd`, exposed
+  as `GobdInvoice::eInvoiceXml()`. The library is wrapped behind the serializer so
+  the domain model never depends on its API (nor on the ZUGFeRD 2.x / XRechnung
+  3.x→4.x transitions). The configured `einvoice.default_format` selects the
+  profile — ZUGFeRD/Factur-X **EN16931 (COMFORT)** by default, or the XRechnung 3
+  CIUS; the **MINIMUM and BASIC WL profiles are refused** (booking aids, not a
+  valid §14 invoice). Maps parties and tax registrations (USt-IdNr = VA,
+  Steuernummer = FC), lines (with exact BT-131 line-total reconciliation via the
+  price base quantity), the per-(category,rate) VAT breakdown with exemption
+  reasons (BT-120, host-overridable via `meta.exemption_note`), payment terms, and
+  the full monetary summation (BT-106 → BT-115) with paid amount + already-invoiced
+  advances folded into the prepaid amount so BR-CO-16 holds. A **Storno is emitted
+  as a 381 credit note with positive amounts** (the credit is conveyed by the type
+  code, not a negative sign — BR-27); a **non-EUR invoice additionally carries the
+  accounting currency (BT-6) and the EUR VAT total (BT-111)** at the §16 Abs. 6
+  rate; a **reverse-charge (AE) or intra-community (K) invoice without a buyer VAT
+  id fails loud** (BR-AE-02 / BR-IC-02, BT-48); a zero-quantity line no longer
+  breaks the line-total division. `DocumentType` gains `en16931TypeCode()` (BT-3:
+  380 invoice / 381 credit note / 389 self-billed). KoSIT Schematron validation,
+  the XRechnung UBL syntax, PDF/A-3 embedding and the receive/parse path are later
+  M5 slices.
 - **M3 document conversion:** `GobdInvoice::convert()` turns a pre-invoice
   document (Angebot, Kostenvoranschlag, Leistungsnachweis) into an invoice draft
   (Rechnung, Abschlags-/Schlussrechnung), copying its lines, parties and

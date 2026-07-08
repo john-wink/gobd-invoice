@@ -15,6 +15,7 @@ use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
@@ -56,6 +57,7 @@ final readonly class GobdInvoiceManager
         private DocumentContentValidator $documentContentValidator,
         private AuditLogger $auditLogger,
         private ContentHasher $contentHasher,
+        private EInvoiceSerializer $eInvoiceSerializer,
     ) {}
 
     /**
@@ -246,6 +248,19 @@ final readonly class GobdInvoiceManager
 
         // (3) The audit hash chain is unbroken.
         return $this->auditLogger->verify($document);
+    }
+
+    /**
+     * Serialize a finalized document into a structured EN 16931 e-invoice
+     * (ZUGFeRD/Factur-X or XRechnung CII XML per the configured format/profile).
+     * The document must be finalized and of an invoice type; the bound
+     * {@see EInvoiceSerializer} enforces this and refuses non-compliant profiles.
+     */
+    public function eInvoiceXml(Document $document): string
+    {
+        $document->loadMissing('lines');
+
+        return $this->eInvoiceSerializer->serialize($document);
     }
 
     /**

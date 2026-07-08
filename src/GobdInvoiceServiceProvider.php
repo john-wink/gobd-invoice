@@ -12,11 +12,13 @@ use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Contracts\TaxRateResolver;
 use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
+use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
 use JohnWink\GobdInvoice\Numbering\LockingSequenceGenerator;
@@ -76,6 +78,18 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
         ));
         $this->app->bind(AuditLogger::class, AppendOnlyAuditLogger::class);
         $this->app->bind(DocumentContentValidator::class, MandatoryContentValidator::class);
+
+        // E-invoice serialization. ZUGFeRD/Factur-X and XRechnung-CII are all
+        // produced by the CII serializer; the configured format selects the
+        // profile (XRechnung is the German CIUS, otherwise the ZUGFeRD profile).
+        $this->app->bind(static function (): EInvoiceSerializer {
+            $format = Config::string('gobd-invoice.einvoice.default_format', 'zugferd');
+            $profile = $format === 'xrechnung'
+                ? 'xrechnung'
+                : Config::string('gobd-invoice.einvoice.zugferd_profile', 'en16931');
+
+            return new ZugferdCiiSerializer($profile);
+        });
 
         // Let host apps swap the document model (the spatie/laravel-permission pattern).
         $this->app->bind(static function (Application $application): InvoiceDocument {

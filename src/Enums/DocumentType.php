@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Enums;
 
+use LogicException;
+
 /**
  * The German business-document taxonomy this engine models.
  *
@@ -79,6 +81,24 @@ enum DocumentType: string
             self::Storno,
             self::Gutschrift => true,
             default => false,
+        };
+    }
+
+    /**
+     * The EN 16931 invoice type code (BT-3, code list UNCL1001) for the
+     * structured e-invoice: 380 commercial invoice, 381 credit note (a Storno
+     * reverses via a full credit), 389 self-billed invoice (Gutschrift, §14
+     * Abs. 2 UStG). Only defined for types that {@see self::canEmitEInvoice()}.
+     */
+    public function en16931TypeCode(): string
+    {
+        return match ($this) {
+            self::Rechnung,
+            self::Abschlagsrechnung,
+            self::Schlussrechnung => '380',
+            self::Storno => '381',
+            self::Gutschrift => '389',
+            default => throw new LogicException("Document type {$this->value} has no EN 16931 invoice type code."),
         };
     }
 
