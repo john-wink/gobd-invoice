@@ -23,10 +23,12 @@ use JohnWink\GobdInvoice\Enums\TaxCategory;
 use JohnWink\GobdInvoice\Events\DocumentCancelled;
 use JohnWink\GobdInvoice\Events\DocumentDrafted;
 use JohnWink\GobdInvoice\Events\DocumentFinalized;
+use JohnWink\GobdInvoice\Exceptions\DocumentContentException;
 use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
 use JohnWink\GobdInvoice\Exceptions\InvalidStatusTransitionException;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Models\DocumentLine;
+use JohnWink\GobdInvoice\ValueObjects\AdvanceDeduction;
 use JohnWink\GobdInvoice\ValueObjects\AllowanceCharge;
 use JohnWink\GobdInvoice\ValueObjects\DocumentTotals;
 use JohnWink\GobdInvoice\ValueObjects\ExchangeRate;
@@ -102,14 +104,23 @@ final readonly class GobdInvoiceManager
         $document->seller = $this->normalizeParty($attributes['seller'] ?? null);
         $document->buyer = $this->normalizeParty($attributes['buyer'] ?? null);
 
+        // Associate the host model BEFORE resolving advance deductions so each
+        // deducted advance can be checked to belong to the same order (§14 Abs. 5).
+        if (($attributes['documentable'] ?? null) instanceof Model) {
+            $document->documentable()->associate($attributes['documentable']);
+        }
+
+        $document->advance_deductions = $this->resolveAdvanceDeductions(
+            $attributes['deducts'] ?? null,
+            $currency,
+            $document->documentable_type,
+            $document->documentable_id,
+        );
+
         if (isset($attributes['meta']) && is_array($attributes['meta'])) {
             /** @var array<string, mixed> $meta */
             $meta = $attributes['meta'];
             $document->meta = $meta;
-        }
-
-        if (($attributes['documentable'] ?? null) instanceof Model) {
-            $document->documentable()->associate($attributes['documentable']);
         }
 
         $document->save();
@@ -163,6 +174,11 @@ final readonly class GobdInvoiceManager
             if (Config::boolean('gobd-invoice.content_validation', true)) {
                 $this->documentContentValidator->validate($document);
             }
+
+            // The §14 Abs. 5 double-VAT gate is a hard correctness protection and
+            // runs unconditionally — it is not disabled by the field-validation
+            // toggle above (which only relaxes §14 Abs. 4 completeness).
+            $this->assertAdvancesDeducted($document);
 
             $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
 
@@ -314,6 +330,16 @@ final readonly class GobdInvoiceManager
             ? Money::fromMinorUnits($document->paid_total, $currency)
             : null;
 
+        $advanceDeductions = [];
+        foreach ($document->advance_deductions ?? [] as $spec) {
+            $advanceDeductions[] = new AdvanceDeduction(
+                Money::fromMinorUnits($this->toIntOrFail($spec['net_minor'] ?? 0, 'advance net'), $currency),
+                Money::fromMinorUnits($this->toIntOrFail($spec['vat_minor'] ?? 0, 'advance vat'), $currency),
+                isset($spec['reference']) ? $this->toStringValue($spec['reference']) : null,
+                isset($spec['date']) ? $this->toStringValue($spec['date']) : null,
+            );
+        }
+
         return new TotalsInput(
             $document->lines->all(),
             $adjustments,
@@ -321,6 +347,7 @@ final readonly class GobdInvoiceManager
             $this->paymentTermsFor($document),
             $currency,
             $this->accountingRateFor($document),
+            $advanceDeductions,
         );
     }
 
@@ -336,6 +363,8 @@ final readonly class GobdInvoiceManager
         $document->rounding_total = $documentTotals->roundingAmount->minorUnits;
         $document->amount_due = $documentTotals->amountDue->minorUnits;
         $document->vat_accounting_total = $documentTotals->vatAccountingTotal?->minorUnits;
+        $document->advances_net_total = $documentTotals->advancesNetTotal?->minorUnits;
+        $document->advances_vat_total = $documentTotals->advancesVatTotal?->minorUnits;
         $document->tax_breakdown = $this->breakdownGroups($documentTotals->taxBreakdown);
     }
 
@@ -618,10 +647,13 @@ final readonly class GobdInvoiceManager
             'rounding_total' => $document->rounding_total,
             'amount_due' => $document->amount_due,
             'vat_accounting_total' => $document->vat_accounting_total,
+            'advances_net_total' => $document->advances_net_total,
+            'advances_vat_total' => $document->advances_vat_total,
             'tax_breakdown' => $document->tax_breakdown,
             'document_adjustments' => $document->document_adjustments,
             'payment_terms' => $document->payment_terms,
             'accounting_rate' => $document->accounting_rate,
+            'advance_deductions' => $document->advance_deductions,
             'seller' => $document->seller,
             'buyer' => $document->buyer,
             'lines' => $document->lines->map(static fn (DocumentLine $documentLine): array => [
@@ -665,6 +697,103 @@ final readonly class GobdInvoiceManager
         }
 
         return Party::fromArray($raw)->toArray();
+    }
+
+    /**
+     * Resolve prior advance/progress invoices (by document id) into a canonical,
+     * snapshotted deduction list, reading each advance's net + VAT AS SHOWN.
+     * Fails loud if a referenced document is missing, duplicated, not a finalized
+     * (non-cancelled) Abschlagsrechnung, in a different currency, or — when the
+     * final invoice is linked to an order — belongs to a different order.
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function resolveAdvanceDeductions(mixed $deducts, string $currency, ?string $documentableType, ?int $documentableId): ?array
+    {
+        if (! is_array($deducts) || $deducts === []) {
+            return null;
+        }
+
+        /** @var class-string<Document> $model */
+        $model = config('gobd-invoice.models.document', Document::class);
+
+        $specs = [];
+        $seen = [];
+
+        foreach ($deducts as $deduct) {
+            throw_unless(is_int($deduct) || (is_string($deduct) && ctype_digit($deduct)), GobdInvoiceException::class, 'A deducted advance must be referenced by an integer document id.');
+            $id = (int) $deduct;
+
+            throw_if(in_array($id, $seen, true), GobdInvoiceException::class, "Advance [{$id}] is deducted more than once.");
+            $seen[] = $id;
+
+            $advance = $model::query()->find($id);
+
+            throw_unless($advance instanceof Document, GobdInvoiceException::class, "Deducted advance [{$id}] was not found.");
+            throw_unless($advance->type->isAdvanceInvoice(), GobdInvoiceException::class, "Document [{$id}] is not an Abschlagsrechnung and cannot be deducted in a Schlussrechnung.");
+            throw_if($advance->finalized_at === null, GobdInvoiceException::class, "Deducted advance [{$id}] is not finalized.");
+            throw_if($advance->status === DocumentStatus::Cancelled, GobdInvoiceException::class, "Deducted advance [{$id}] is cancelled (its VAT was already reversed by a Storno) and must not be deducted.");
+            throw_if($advance->currency !== $currency, GobdInvoiceException::class, "Deducted advance [{$id}] currency [{$advance->currency}] differs from the final invoice currency [{$currency}].");
+
+            // Guard against deducting an advance from a different order.
+            if ($documentableType !== null && $documentableId !== null) {
+                throw_if(
+                    $advance->documentable_type !== $documentableType || $advance->documentable_id !== $documentableId,
+                    GobdInvoiceException::class,
+                    "Deducted advance [{$id}] belongs to a different order than the final invoice.",
+                );
+            }
+
+            $specs[] = [
+                'document_id' => $advance->id,
+                'reference' => $advance->number,
+                'date' => $advance->issue_date?->toDateString(),
+                'net_minor' => $advance->net_total ?? 0,
+                'vat_minor' => $advance->vat_total ?? 0,
+            ];
+        }
+
+        return $specs;
+    }
+
+    /**
+     * The §14 Abs. 5 double-VAT gate: a Schlussrechnung linked to an order
+     * (documentable) cannot finalize while finalized Abschlagsrechnungen for that
+     * order remain un-deducted — otherwise their VAT would be owed twice (§14c).
+     * Without an order link the caller must deduct advances explicitly.
+     */
+    private function assertAdvancesDeducted(Document $document): void
+    {
+        if ($document->type !== DocumentType::Schlussrechnung) {
+            return;
+        }
+
+        if ($document->documentable_type === null || $document->documentable_id === null) {
+            return;
+        }
+
+        $deductedIds = [];
+        foreach ($document->advance_deductions ?? [] as $spec) {
+            if (isset($spec['document_id']) && is_numeric($spec['document_id'])) {
+                $deductedIds[] = (int) $spec['document_id'];
+            }
+        }
+
+        /** @var class-string<Document> $model */
+        $model = config('gobd-invoice.models.document', Document::class);
+
+        // A cancelled (Storno'd) advance had its VAT reversed by its Storno, so it
+        // must NOT be deducted and does not count as undeducted here.
+        $hasUndeducted = $model::query()
+            ->where('documentable_type', $document->documentable_type)
+            ->where('documentable_id', $document->documentable_id)
+            ->where('type', DocumentType::Abschlagsrechnung->value)
+            ->whereNotNull('finalized_at')
+            ->where('status', '!=', DocumentStatus::Cancelled->value)
+            ->whereNotIn('id', $deductedIds)
+            ->exists();
+
+        throw_if($hasUndeducted, DocumentContentException::withViolations($document->number, ['undeducted_advances']));
     }
 
     private function parseDate(mixed $value): ?Carbon

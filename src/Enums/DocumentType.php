@@ -55,6 +55,18 @@ enum DocumentType: string
     }
 
     /**
+     * Whether this is a partial/advance invoice whose already-invoiced net AND
+     * VAT a later Schlussrechnung must deduct (§14 Abs. 5 Satz 2 UStG) to avoid
+     * the §14c double-VAT trap. Currently the {@see self::Abschlagsrechnung} is
+     * the only modelled advance type; a distinct Anzahlungs-/Vorauszahlungs-
+     * rechnung (advance-payment, §13 Abs. 1 Nr. 1a) is a planned future case.
+     */
+    public function isAdvanceInvoice(): bool
+    {
+        return $this === self::Abschlagsrechnung;
+    }
+
+    /**
      * Whether the document may be exported as a structured EN 16931 e-invoice.
      * A Mahnung, Angebot or Kostenvoranschlag is not an invoice and cannot.
      */

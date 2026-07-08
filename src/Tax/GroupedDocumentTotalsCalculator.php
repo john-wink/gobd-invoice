@@ -70,6 +70,15 @@ final readonly class GroupedDocumentTotalsCalculator implements DocumentTotalsCa
             ? $accountingRate->convert($taxBreakdown->vatTotal)
             : null;
 
+        // §14 Abs. 5: a Schlussrechnung deducts prior advances' net AND VAT (as
+        // shown on them) from the amount due, so the VAT is not owed twice.
+        $advancesNetTotal = Money::zero($currency);
+        $advancesVatTotal = Money::zero($currency);
+        foreach ($totalsInput->advanceDeductions as $advanceDeduction) {
+            $advancesNetTotal = $advancesNetTotal->plus($advanceDeduction->net);
+            $advancesVatTotal = $advancesVatTotal->plus($advanceDeduction->vat);
+        }
+
         return new DocumentTotals(
             lineNetTotal: $lineNetTotal,
             allowanceTotal: $allowanceTotal,
@@ -83,12 +92,16 @@ final readonly class GroupedDocumentTotalsCalculator implements DocumentTotalsCa
             // cash-rounding strategy can populate it later without touching the
             // reconciled breakdown.
             roundingAmount: Money::zero($currency),
-            // BT-115 = BT-112 − BT-113 (+ BT-114 = 0): a sum of already-rounded
+            // Amount due = BT-112 − prior advances (net + VAT) − already paid.
+            // The full contract net/VAT/gross above are shown in full; the
+            // advances are deducted here (§14 Abs. 5). A sum of already-rounded
             // amounts, never re-rounded (REQ-10).
-            amountDue: $taxBreakdown->grossTotal->minus($paidAmount),
+            amountDue: $taxBreakdown->grossTotal->minus($advancesNetTotal)->minus($advancesVatTotal)->minus($paidAmount),
             paymentTerms: $totalsInput->paymentTerms,
             vatAccountingTotal: $vatAccountingTotal,
             accountingRate: $accountingRate,
+            advancesNetTotal: $advancesNetTotal,
+            advancesVatTotal: $advancesVatTotal,
         );
     }
 }

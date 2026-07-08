@@ -108,6 +108,7 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | Race-safe gapless sequential numbering | ✅ M1 |
 | Finalization: full EN 16931 chain persisted, snapshot + SHA-256 content hash | ✅ M3 |
 | §14 mandatory-content validation (fail-closed; §33 Kleinbetrag relaxation) | ✅ M3 |
+| Schlussrechnung double-VAT gate — advance net + VAT deduction (§14 Abs. 5) | ✅ M3 |
 | Immutability guard + insert-only, hash-chained audit log | ✅ M3 (core) |
 | Storno / cancellation (Storno statt Löschen) | ✅ M3 (core) |
 | Retention window (`retention_until`, 8y/10y) | ✅ M1 |

@@ -46,5 +46,7 @@ final readonly class DocumentTotals
         public ?PaymentTerms $paymentTerms = null,
         public ?Money $vatAccountingTotal = null,
         public ?ExchangeRate $accountingRate = null,
+        public ?Money $advancesNetTotal = null,
+        public ?Money $advancesVatTotal = null,
     ) {}
 }

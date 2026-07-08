@@ -24,6 +24,7 @@ final readonly class TotalsInput
      * @param  array<int, TaxableLine>  $lines
      * @param  array<int, AllowanceCharge>  $documentAllowancesCharges
      * @param  ExchangeRate|null  $accountingRate  rate to the VAT accounting currency (EUR), supplied when the invoice currency is non-EUR so the total VAT is also expressed in EUR (BT-111)
+     * @param  array<int, AdvanceDeduction>  $advanceDeductions  prior advance/progress invoices whose net + VAT a Schlussrechnung deducts (§14 Abs. 5)
      */
     public function __construct(
         public array $lines,
@@ -32,6 +33,7 @@ final readonly class TotalsInput
         public ?PaymentTerms $paymentTerms = null,
         public string $currency = 'EUR',
         public ?ExchangeRate $accountingRate = null,
+        public array $advanceDeductions = [],
     ) {
         // An AllowanceCharge is a TaxableLine (so it can be grouped), but a
         // document-level adjustment placed in $lines would be miscounted into

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M3 Schlussrechnung double-VAT gate (§14 Abs. 5):** an `AdvanceDeduction`
+  value object and a `deducts` draft key that references prior finalized
+  Abschlagsrechnungen by id; the manager snapshots each advance's net + VAT (as
+  shown) and deducts both from the final invoice's amount due, and
+  `DocumentTotals` exposes `advancesNetTotal` / `advancesVatTotal`. Finalizing a
+  Schlussrechnung runs an unconditional gate that blocks it while a finalized,
+  non-cancelled Abschlagsrechnung for the same order (documentable) is left
+  un-deducted — preventing the §14c double-VAT error. Resolution fails loud on a
+  missing, duplicate, cancelled, wrong-type, wrong-currency or wrong-order
+  advance. The structured EN 16931 representation of the deduction is deferred to
+  the e-invoice exporter (M5).
 - **M3 §14 content validation (fail-closed):** a `Party` value object plus
   `seller` / `buyer` on the document (§14 Abs. 4 Nr. 1/2 parties), and a
   `DocumentContentValidator` (`MandatoryContentValidator`) that `finalize()` runs

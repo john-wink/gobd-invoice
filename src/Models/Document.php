@@ -44,10 +44,13 @@ use Override;
  * @property int|null $rounding_total
  * @property int|null $amount_due
  * @property int|null $vat_accounting_total
+ * @property int|null $advances_net_total
+ * @property int|null $advances_vat_total
  * @property array<int, array<string, mixed>>|null $tax_breakdown
  * @property array<int, array<string, mixed>>|null $document_adjustments
  * @property array<string, mixed>|null $payment_terms
  * @property array<string, mixed>|null $accounting_rate
+ * @property array<int, array<string, mixed>>|null $advance_deductions
  * @property array<string, mixed>|null $seller
  * @property array<string, mixed>|null $buyer
  * @property Carbon|null $issue_date
@@ -187,8 +190,9 @@ class Document extends Model implements InvoiceDocument
         'line_net_total', 'allowance_total', 'charge_total',
         'net_total', 'vat_total', 'gross_total',
         'paid_total', 'rounding_total', 'amount_due', 'vat_accounting_total',
+        'advances_net_total', 'advances_vat_total',
         'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
-        'seller', 'buyer',
+        'advance_deductions', 'seller', 'buyer',
         'issue_date', 'service_date', 'finalized_at', 'content_hash', 'finalized_payload',
     ];
 
@@ -213,10 +217,13 @@ class Document extends Model implements InvoiceDocument
             'rounding_total' => 'integer',
             'amount_due' => 'integer',
             'vat_accounting_total' => 'integer',
+            'advances_net_total' => 'integer',
+            'advances_vat_total' => 'integer',
             'tax_breakdown' => 'array',
             'document_adjustments' => 'array',
             'payment_terms' => 'array',
             'accounting_rate' => 'array',
+            'advance_deductions' => 'array',
             'seller' => 'array',
             'buyer' => 'array',
             'issue_date' => 'date',
