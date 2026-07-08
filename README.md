@@ -106,7 +106,7 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | §19 Kleinunternehmer rule (€25k/€100k limits, mid-year Fallbeil) | ✅ M2 (engine) |
 | Multi-currency VAT in EUR accounting currency (BT-111) | ✅ M2 (engine) |
 | Race-safe gapless sequential numbering | ✅ M1 |
-| Finalization: snapshot + SHA-256 content hash | ✅ M3 (core) |
+| Finalization: full EN 16931 chain persisted, snapshot + SHA-256 content hash | ✅ M3 |
 | Immutability guard + insert-only, hash-chained audit log | ✅ M3 (core) |
 | Storno / cancellation (Storno statt Löschen) | ✅ M3 (core) |
 | Retention window (`retention_until`, 8y/10y) | ✅ M1 |

@@ -21,10 +21,27 @@ return new class extends Migration
             $table->string('currency', 3)->default('EUR');
 
             // Monetary totals are stored as integer minor units, never floats.
+            // The full EN 16931 chain: line_net_total = BT-106, allowance_total =
+            // BT-107, charge_total = BT-108, net_total = BT-109, vat_total =
+            // BT-110, gross_total = BT-112, paid_total = BT-113, rounding_total =
+            // BT-114, amount_due = BT-115; vat_accounting_total = BT-111 (EUR).
+            $table->bigInteger('line_net_total')->nullable();
+            $table->bigInteger('allowance_total')->nullable();
+            $table->bigInteger('charge_total')->nullable();
             $table->bigInteger('net_total')->nullable();
             $table->bigInteger('vat_total')->nullable();
             $table->bigInteger('gross_total')->nullable();
+            $table->bigInteger('paid_total')->nullable();
+            $table->bigInteger('rounding_total')->nullable();
+            $table->bigInteger('amount_due')->nullable();
+            $table->bigInteger('vat_accounting_total')->nullable();
             $table->json('tax_breakdown')->nullable();
+
+            // Document-level allowances/charges, payment terms (Skonto) and the
+            // §16 Abs. 6 UStG accounting-currency rate (all part of the snapshot).
+            $table->json('document_adjustments')->nullable();
+            $table->json('payment_terms')->nullable();
+            $table->json('accounting_rate')->nullable();
 
             $table->date('issue_date')->nullable();
             $table->date('service_date')->nullable();

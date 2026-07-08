@@ -34,10 +34,20 @@ use Override;
  * @property int|null $year
  * @property int|null $sequence
  * @property string $currency
+ * @property int|null $line_net_total
+ * @property int|null $allowance_total
+ * @property int|null $charge_total
  * @property int|null $net_total
  * @property int|null $vat_total
  * @property int|null $gross_total
+ * @property int|null $paid_total
+ * @property int|null $rounding_total
+ * @property int|null $amount_due
+ * @property int|null $vat_accounting_total
  * @property array<int, array<string, mixed>>|null $tax_breakdown
+ * @property array<int, array<string, mixed>>|null $document_adjustments
+ * @property array<string, mixed>|null $payment_terms
+ * @property array<string, mixed>|null $accounting_rate
  * @property Carbon|null $issue_date
  * @property Carbon|null $service_date
  * @property Carbon|null $finalized_at
@@ -171,8 +181,11 @@ class Document extends Model implements InvoiceDocument
      * @var list<string>
      */
     private const array IMMUTABLE_COLUMNS = [
-        'type', 'number', 'series', 'year', 'sequence', 'currency',
-        'net_total', 'vat_total', 'gross_total', 'tax_breakdown',
+        'type', 'number', 'series', 'year', 'sequence', 'currency', 'source_document_id',
+        'line_net_total', 'allowance_total', 'charge_total',
+        'net_total', 'vat_total', 'gross_total',
+        'paid_total', 'rounding_total', 'amount_due', 'vat_accounting_total',
+        'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
         'issue_date', 'service_date', 'finalized_at', 'content_hash', 'finalized_payload',
     ];
 
@@ -187,10 +200,20 @@ class Document extends Model implements InvoiceDocument
             'status' => DocumentStatus::class,
             'year' => 'integer',
             'sequence' => 'integer',
+            'line_net_total' => 'integer',
+            'allowance_total' => 'integer',
+            'charge_total' => 'integer',
             'net_total' => 'integer',
             'vat_total' => 'integer',
             'gross_total' => 'integer',
+            'paid_total' => 'integer',
+            'rounding_total' => 'integer',
+            'amount_due' => 'integer',
+            'vat_accounting_total' => 'integer',
             'tax_breakdown' => 'array',
+            'document_adjustments' => 'array',
+            'payment_terms' => 'array',
+            'accounting_rate' => 'array',
             'issue_date' => 'date',
             'service_date' => 'date',
             'finalized_at' => 'datetime',

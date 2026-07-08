@@ -21,7 +21,9 @@ return new class extends Migration
             $table->string('unit')->nullable();
 
             $table->bigInteger('unit_price_minor')->default(0);
+            $table->string('price_mode')->default('net'); // net | gross (Netto-/Bruttopreis)
             $table->bigInteger('discount_minor')->default(0);
+            $table->json('line_adjustments')->nullable();  // line-level allowances/charges
             $table->bigInteger('line_net_minor')->default(0);
 
             $table->string('tax_rate')->default('19.0');   // BT-119 percentage

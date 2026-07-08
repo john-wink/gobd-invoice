@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M3 finalization wiring:** `finalize()` now computes and persists the full
+  EN 16931 monetary chain (BT-106 → BT-115 plus BT-111) via the
+  `DocumentTotalsCalculator`. `draft()` accepts per-line price modes (`net` /
+  `gross`) and allowances/charges, and document-level allowances/charges,
+  `payment_terms` (Skonto), an `accounting_rate` (§16 Abs. 6 UStG rate to EUR)
+  and `paid_minor`. The immutability guard, the content-hash snapshot (incl. the
+  Storno→original link) and the Storno reversal (which flips document-level
+  allowances/charges) all cover the new fields. Malformed adjustment/rate/amount
+  input fails loud at draft; a non-EUR invoice without an accounting rate fails
+  loud at finalize.
+
 - **M2 multi-currency VAT (BT-111):** `ExchangeRate` value object +
   `Money::convertedTo()`. When the invoice currency is not the VAT accounting
   currency (EUR), `DocumentTotals` additionally carries the total VAT expressed

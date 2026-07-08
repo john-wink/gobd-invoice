@@ -10,12 +10,14 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
+use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
-use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
+use JohnWink\GobdInvoice\Enums\PriceMode;
 use JohnWink\GobdInvoice\Enums\TaxCategory;
 use JohnWink\GobdInvoice\Events\DocumentCancelled;
 use JohnWink\GobdInvoice\Events\DocumentDrafted;
@@ -24,9 +26,16 @@ use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
 use JohnWink\GobdInvoice\Exceptions\InvalidStatusTransitionException;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Models\DocumentLine;
+use JohnWink\GobdInvoice\ValueObjects\AllowanceCharge;
+use JohnWink\GobdInvoice\ValueObjects\DocumentTotals;
+use JohnWink\GobdInvoice\ValueObjects\ExchangeRate;
+use JohnWink\GobdInvoice\ValueObjects\LineInput;
 use JohnWink\GobdInvoice\ValueObjects\Money;
+use JohnWink\GobdInvoice\ValueObjects\PaymentTerms;
 use JohnWink\GobdInvoice\ValueObjects\TaxBreakdown;
 use JohnWink\GobdInvoice\ValueObjects\TaxBreakdownLine;
+use JohnWink\GobdInvoice\ValueObjects\TaxRate;
+use JohnWink\GobdInvoice\ValueObjects\TotalsInput;
 
 /**
  * The package's primary entry point (resolved by the {@see Facades\GobdInvoice}
@@ -39,7 +48,7 @@ final readonly class GobdInvoiceManager
 {
     public function __construct(
         private NumberSequenceGenerator $numberSequenceGenerator,
-        private TotalsCalculator $totalsCalculator,
+        private DocumentTotalsCalculator $documentTotalsCalculator,
         private AuditLogger $auditLogger,
         private ContentHasher $contentHasher,
     ) {}
@@ -47,8 +56,13 @@ final readonly class GobdInvoiceManager
     /**
      * Create an editable draft. Lines are arrays of:
      * `description`, `quantity` (decimal string), `unit?`, and either
-     * `unit_price` (decimal string) or `unit_price_minor` (int), `discount_minor?`,
-     * `tax_rate?` (e.g. "19.0"), `tax_category?` (UNCL5305 code).
+     * `unit_price` (decimal string) or `unit_price_minor` (int), `price_mode?`
+     * (`net` | `gross`), `discount_minor?`, `adjustments?` (line allowances/
+     * charges), `tax_rate?` (e.g. "19.0"), `tax_category?` (UNCL5305 code).
+     *
+     * Document-level `$attributes` may carry `adjustments` (allowances/charges),
+     * `payment_terms` (Skonto), `accounting_rate` (§16 Abs. 6 UStG rate to EUR)
+     * and `paid_minor`.
      *
      * @param  array<string, mixed>  $attributes
      * @param  array<int, array<string, mixed>>  $lines
@@ -71,6 +85,17 @@ final readonly class GobdInvoiceManager
             ? (bool) $attributes['is_financial_sector']
             : Config::boolean('gobd-invoice.retention.financial_sector', false);
         $document->retention_class = 'voucher';
+
+        if (isset($attributes['paid_minor'])) {
+            $document->paid_total = $this->toIntOrFail($attributes['paid_minor'], 'paid_minor');
+        }
+
+        // Document-level allowances/charges, payment terms and the accounting-
+        // currency rate are validated into value objects now (fail loud) and
+        // stored in canonical form so finalize() can rebuild them faithfully.
+        $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
+        $document->payment_terms = $this->normalizePaymentTerms($attributes['payment_terms'] ?? null);
+        $document->accounting_rate = $this->normalizeAccountingRate($attributes['accounting_rate'] ?? null);
 
         if (isset($attributes['meta']) && is_array($attributes['meta'])) {
             /** @var array<string, mixed> $meta */
@@ -96,9 +121,9 @@ final readonly class GobdInvoiceManager
     }
 
     /**
-     * Finalize (festschreiben) a draft: compute totals, assign the number,
-     * snapshot + hash the content, set the retention window and write the audit
-     * entry. After this the tax-relevant content is immutable.
+     * Finalize (festschreiben) a draft: compute the full EN 16931 totals chain,
+     * assign the number, snapshot + hash the content, set the retention window
+     * and write the audit entry. After this the tax-relevant content is immutable.
      */
     public function finalize(Document $document): Document
     {
@@ -124,7 +149,7 @@ final readonly class GobdInvoiceManager
         // finalized document. Keep this transaction tight: slow work (PDF /
         // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
         DB::transaction(function () use ($document, $issuedAt, $series, $number): void {
-            $taxBreakdown = $this->totalsCalculator->calculate($document->lines->all(), $document->currency);
+            $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
 
             $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
 
@@ -132,10 +157,7 @@ final readonly class GobdInvoiceManager
             $document->series = $number->series;
             $document->year = $number->year;
             $document->sequence = $number->sequence;
-            $document->net_total = $taxBreakdown->netTotal->minorUnits;
-            $document->vat_total = $taxBreakdown->vatTotal->minorUnits;
-            $document->gross_total = $taxBreakdown->grossTotal->minorUnits;
-            $document->tax_breakdown = $this->breakdownGroups($taxBreakdown);
+            $this->applyTotals($document, $documentTotals);
             $document->issue_date = $issuedAt;
 
             [$document->retention_class, $document->retention_until] = $this->retentionFor($document, $issuedAt);
@@ -209,20 +231,34 @@ final readonly class GobdInvoiceManager
             'quantity' => '1',
             'unit' => $documentLine->unit,
             'unit_price_minor' => -$documentLine->line_net_minor,
+            'price_mode' => PriceMode::Net->value,
             'tax_rate' => $documentLine->tax_rate,
             'tax_category' => $documentLine->tax_category,
         ])->values()->all();
+
+        // Flip document-level allowances/charges so the Storno's totals are the
+        // exact negation of the original (an allowance that reduced the base is
+        // reversed by a charge, and vice versa). The accounting-currency rate is
+        // inherited so a non-EUR Storno can still express BT-111.
+        $stornoAdjustments = $this->reversedAdjustments($document);
 
         // Atomic Storno: the new Storno's draft+finalization, the original's flip
         // to Cancelled, and the 'cancelled' audit entry commit together. A failure
         // anywhere rolls the whole correction back, so there can be no orphan
         // Storno without its cancelled original (Storno statt Löschen).
-        $storno = DB::transaction(function () use ($document, $reason, $stornoLines): Document {
+        // The Storno reverses the supply (lines + allowances/charges), not the
+        // payment: the original's paid amount (BT-113) and Skonto terms are a
+        // payment-reconciliation concern and are deliberately not carried over,
+        // so the Storno is a full credit (amount due = −gross) reconciled against
+        // any prior payment outside this document.
+        $storno = DB::transaction(function () use ($document, $reason, $stornoLines, $stornoAdjustments): Document {
             $storno = $this->draft(DocumentType::Storno, [
                 'currency' => $document->currency,
                 'series' => DocumentType::Storno->defaultSeries(),
                 'service_date' => $document->service_date,
                 'is_financial_sector' => $document->is_financial_sector,
+                'adjustments' => $stornoAdjustments,
+                'accounting_rate' => $document->accounting_rate,
                 'meta' => ['reason' => $reason, 'storno_of' => $document->number],
             ], $stornoLines);
 
@@ -247,22 +283,85 @@ final readonly class GobdInvoiceManager
     }
 
     /**
+     * Assemble the calculator input from the document's persisted lines and its
+     * canonical document-level allowances/charges, payment terms, paid amount
+     * and accounting-currency rate.
+     */
+    private function totalsInputFor(Document $document): TotalsInput
+    {
+        $currency = $document->currency;
+
+        $adjustments = [];
+        foreach ($document->document_adjustments ?? [] as $spec) {
+            $adjustments[] = $this->allowanceChargeFrom($spec, $currency);
+        }
+
+        $paidAmount = $document->paid_total !== null
+            ? Money::fromMinorUnits($document->paid_total, $currency)
+            : null;
+
+        return new TotalsInput(
+            $document->lines->all(),
+            $adjustments,
+            $paidAmount,
+            $this->paymentTermsFor($document),
+            $currency,
+            $this->accountingRateFor($document),
+        );
+    }
+
+    private function applyTotals(Document $document, DocumentTotals $documentTotals): void
+    {
+        $document->line_net_total = $documentTotals->lineNetTotal->minorUnits;
+        $document->allowance_total = $documentTotals->allowanceTotal->minorUnits;
+        $document->charge_total = $documentTotals->chargeTotal->minorUnits;
+        $document->net_total = $documentTotals->netTotal->minorUnits;
+        $document->vat_total = $documentTotals->vatTotal->minorUnits;
+        $document->gross_total = $documentTotals->grossTotal->minorUnits;
+        $document->paid_total = $documentTotals->paidAmount->minorUnits;
+        $document->rounding_total = $documentTotals->roundingAmount->minorUnits;
+        $document->amount_due = $documentTotals->amountDue->minorUnits;
+        $document->vat_accounting_total = $documentTotals->vatAccountingTotal?->minorUnits;
+        $document->tax_breakdown = $this->breakdownGroups($documentTotals->taxBreakdown);
+    }
+
+    /**
      * @param  array<string, mixed>  $line
      * @return array<string, mixed>
      */
     private function buildLineAttributes(int $position, array $line, string $currency): array
     {
         $unitPrice = isset($line['unit_price_minor'])
-            ? Money::fromMinorUnits($this->toIntValue($line['unit_price_minor']), $currency)
+            ? Money::fromMinorUnits($this->toIntOrFail($line['unit_price_minor'], 'unit_price_minor'), $currency)
             : Money::fromDecimal($this->toStringValue($line['unit_price'] ?? null, '0'), $currency);
 
         $quantity = $this->toStringValue($line['quantity'] ?? null, '1');
+        $priceMode = PriceMode::tryFrom($this->toStringValue($line['price_mode'] ?? null, 'net')) ?? PriceMode::Net;
+
+        $taxRate = new TaxRate(
+            $this->toStringValue($line['tax_rate'] ?? null, Config::string('gobd-invoice.tax.standard_rate', '19.0')),
+            TaxCategory::from($this->toStringValue($line['tax_category'] ?? null, TaxCategory::Standard->value)),
+        );
 
         $discount = isset($line['discount_minor'])
-            ? Money::fromMinorUnits($this->toIntValue($line['discount_minor']), $currency)
+            ? Money::fromMinorUnits($this->toIntOrFail($line['discount_minor'], 'discount_minor'), $currency)
             : Money::zero($currency);
 
-        $money = $unitPrice->multipliedBy($quantity)->minus($discount);
+        // Line-level allowances/charges inherit the line's tax rate; the legacy
+        // flat discount is modelled as a line allowance so it folds into BT-131.
+        $allowancesCharges = [];
+
+        if ($discount->isPositive()) {
+            $allowancesCharges[] = AllowanceCharge::allowance($discount, $taxRate);
+        }
+
+        $lineAdjustments = $this->normalizeAdjustments($line['adjustments'] ?? null, $currency, $taxRate);
+
+        foreach ($lineAdjustments ?? [] as $spec) {
+            $allowancesCharges[] = $this->allowanceChargeFrom($spec, $currency, $taxRate);
+        }
+
+        $lineInput = new LineInput($unitPrice, $quantity, $taxRate, $priceMode, $allowancesCharges);
 
         return [
             'position' => $position,
@@ -270,12 +369,192 @@ final readonly class GobdInvoiceManager
             'quantity' => $quantity,
             'unit' => isset($line['unit']) ? $this->toStringValue($line['unit']) : null,
             'unit_price_minor' => $unitPrice->minorUnits,
+            'price_mode' => $priceMode->value,
             'discount_minor' => $discount->minorUnits,
-            'line_net_minor' => $money->minorUnits,
-            'tax_rate' => $this->toStringValue($line['tax_rate'] ?? null, Config::string('gobd-invoice.tax.standard_rate', '19.0')),
-            'tax_category' => $this->toStringValue($line['tax_category'] ?? null, TaxCategory::Standard->value),
+            'line_adjustments' => $lineAdjustments,
+            'line_net_minor' => $lineInput->netAmount()->minorUnits,
+            'tax_rate' => $taxRate->percent(),
+            'tax_category' => $taxRate->categoryCode(),
             'currency' => $currency,
         ];
+    }
+
+    /**
+     * Validate raw allowance/charge specs into value objects (fail loud) and
+     * return them in canonical, storable form. Line-level specs inherit the
+     * line's rate; document-level specs carry their own.
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function normalizeAdjustments(mixed $raw, string $currency, ?TaxRate $taxRate = null): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        $specs = [];
+
+        foreach ($raw as $item) {
+            if (is_array($item)) {
+                $specs[] = $this->serializeAdjustment($this->allowanceChargeFrom($item, $currency, $taxRate));
+            }
+        }
+
+        return $specs === [] ? null : $specs;
+    }
+
+    /**
+     * Build an allowance/charge from an arbitrary spec array (host input or the
+     * stored canonical form), reading string keys defensively with defaults.
+     *
+     * @param  array<array-key, mixed>  $spec
+     */
+    private function allowanceChargeFrom(array $spec, string $currency, ?TaxRate $inheritRate = null): AllowanceCharge
+    {
+        // The direction must be explicit — an unknown/typo'd type must not be
+        // silently treated as an allowance (which would flip the amount's sign).
+        $type = $this->toStringValue($spec['type'] ?? 'allowance');
+        throw_unless(in_array($type, ['allowance', 'charge'], true), InvalidArgumentException::class, "Adjustment type must be 'allowance' or 'charge', got [{$type}].");
+        $isCharge = $type === 'charge';
+
+        $taxRate = $inheritRate ?? new TaxRate(
+            $this->toStringValue($spec['tax_rate'] ?? null, Config::string('gobd-invoice.tax.standard_rate', '19.0')),
+            TaxCategory::from($this->toStringValue($spec['tax_category'] ?? null, TaxCategory::Standard->value)),
+        );
+
+        $reason = isset($spec['reason']) ? $this->toStringValue($spec['reason']) : null;
+
+        if (isset($spec['percentage'])) {
+            $base = Money::fromMinorUnits($this->toIntOrFail($spec['base_minor'] ?? 0, 'base_minor'), $currency);
+            $percentage = $this->toStringValue($spec['percentage']);
+
+            return $isCharge
+                ? AllowanceCharge::percentageCharge($percentage, $base, $taxRate, $reason)
+                : AllowanceCharge::percentageAllowance($percentage, $base, $taxRate, $reason);
+        }
+
+        $money = Money::fromMinorUnits($this->toIntOrFail($spec['amount_minor'] ?? 0, 'amount_minor'), $currency);
+
+        return $isCharge
+            ? AllowanceCharge::charge($money, $taxRate, $reason)
+            : AllowanceCharge::allowance($money, $taxRate, $reason);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeAdjustment(AllowanceCharge $allowanceCharge): array
+    {
+        return [
+            'type' => $allowanceCharge->isCharge ? 'charge' : 'allowance',
+            'amount_minor' => $allowanceCharge->amount->minorUnits,
+            'percentage' => $allowanceCharge->percentage,
+            'base_minor' => $allowanceCharge->baseAmount?->minorUnits,
+            'tax_rate' => $allowanceCharge->taxRate->percent(),
+            'tax_category' => $allowanceCharge->taxRate->categoryCode(),
+            'reason' => $allowanceCharge->reason,
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function reversedAdjustments(Document $document): ?array
+    {
+        $adjustments = $document->document_adjustments;
+
+        if ($adjustments === null || $adjustments === []) {
+            return null;
+        }
+
+        $reversed = [];
+
+        foreach ($adjustments as $adjustment) {
+            $adjustment['type'] = $this->toStringValue($adjustment['type'] ?? 'allowance') === 'charge' ? 'allowance' : 'charge';
+            $reversed[] = $adjustment;
+        }
+
+        return $reversed;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function normalizePaymentTerms(mixed $raw): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        $paymentTerms = new PaymentTerms(
+            isset($raw['net_days']) ? $this->toIntOrFail($raw['net_days'], 'net_days') : null,
+            isset($raw['skonto_percentage']) ? $this->toStringValue($raw['skonto_percentage']) : null,
+            isset($raw['skonto_days']) ? $this->toIntOrFail($raw['skonto_days'], 'skonto_days') : null,
+            isset($raw['note']) ? $this->toStringValue($raw['note']) : null,
+        );
+
+        return [
+            'net_days' => $paymentTerms->netDays,
+            'skonto_percentage' => $paymentTerms->skontoPercentage,
+            'skonto_days' => $paymentTerms->skontoDays,
+            'note' => $paymentTerms->note,
+        ];
+    }
+
+    private function paymentTermsFor(Document $document): ?PaymentTerms
+    {
+        $terms = $document->payment_terms;
+
+        if ($terms === null) {
+            return null;
+        }
+
+        return new PaymentTerms(
+            isset($terms['net_days']) ? $this->toIntOrFail($terms['net_days'], 'net_days') : null,
+            isset($terms['skonto_percentage']) ? $this->toStringValue($terms['skonto_percentage']) : null,
+            isset($terms['skonto_days']) ? $this->toIntOrFail($terms['skonto_days'], 'skonto_days') : null,
+            isset($terms['note']) ? $this->toStringValue($terms['note']) : null,
+        );
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function normalizeAccountingRate(mixed $raw): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        $exchangeRate = new ExchangeRate(
+            $this->toStringValue($raw['base_currency'] ?? null),
+            $this->toStringValue($raw['quote_currency'] ?? null, 'EUR'),
+            $this->toStringValue($raw['rate'] ?? null),
+            isset($raw['reference']) ? $this->toStringValue($raw['reference']) : null,
+        );
+
+        return [
+            'base_currency' => $exchangeRate->baseCurrency,
+            'quote_currency' => $exchangeRate->quoteCurrency,
+            'rate' => $exchangeRate->rate,
+            'reference' => $exchangeRate->reference,
+        ];
+    }
+
+    private function accountingRateFor(Document $document): ?ExchangeRate
+    {
+        $rate = $document->accounting_rate;
+
+        if ($rate === null) {
+            return null;
+        }
+
+        return new ExchangeRate(
+            $this->toStringValue($rate['base_currency'] ?? null),
+            $this->toStringValue($rate['quote_currency'] ?? null, 'EUR'),
+            $this->toStringValue($rate['rate'] ?? null),
+            isset($rate['reference']) ? $this->toStringValue($rate['reference']) : null,
+        );
     }
 
     /**
@@ -314,20 +593,34 @@ final readonly class GobdInvoiceManager
             'currency' => $document->currency,
             'issue_date' => $document->issue_date?->toDateString(),
             'service_date' => $document->service_date?->toDateString(),
+            'source_document_id' => $document->source_document_id,
+            'line_net_total' => $document->line_net_total,
+            'allowance_total' => $document->allowance_total,
+            'charge_total' => $document->charge_total,
             'net_total' => $document->net_total,
             'vat_total' => $document->vat_total,
             'gross_total' => $document->gross_total,
+            'paid_total' => $document->paid_total,
+            'rounding_total' => $document->rounding_total,
+            'amount_due' => $document->amount_due,
+            'vat_accounting_total' => $document->vat_accounting_total,
             'tax_breakdown' => $document->tax_breakdown,
+            'document_adjustments' => $document->document_adjustments,
+            'payment_terms' => $document->payment_terms,
+            'accounting_rate' => $document->accounting_rate,
             'lines' => $document->lines->map(static fn (DocumentLine $documentLine): array => [
                 'position' => $documentLine->position,
                 'description' => $documentLine->description,
                 'quantity' => $documentLine->quantity,
                 'unit' => $documentLine->unit,
                 'unit_price_minor' => $documentLine->unit_price_minor,
+                'price_mode' => $documentLine->price_mode,
                 'discount_minor' => $documentLine->discount_minor,
+                'line_adjustments' => $documentLine->line_adjustments,
                 'line_net_minor' => $documentLine->line_net_minor,
                 'tax_rate' => $documentLine->tax_rate,
                 'tax_category' => $documentLine->tax_category,
+                'currency' => $documentLine->currency,
             ])->all(),
         ];
     }
@@ -368,8 +661,14 @@ final readonly class GobdInvoiceManager
         return is_scalar($value) ? (string) $value : $default;
     }
 
-    private function toIntValue(mixed $value, int $default = 0): int
+    /**
+     * Convert a host-supplied minor-unit amount to int, failing loud on a
+     * non-numeric value rather than silently booking it as 0 (a wrong amount).
+     */
+    private function toIntOrFail(mixed $value, string $label): int
     {
-        return is_numeric($value) ? (int) $value : $default;
+        throw_unless(is_numeric($value), InvalidArgumentException::class, "{$label} must be a numeric minor-unit amount, got [{$this->toStringValue($value)}].");
+
+        return (int) $value;
     }
 }

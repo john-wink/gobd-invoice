@@ -26,7 +26,9 @@ use Override;
  * @property string $quantity
  * @property string|null $unit
  * @property int $unit_price_minor
+ * @property string $price_mode
  * @property int $discount_minor
+ * @property array<int, array<string, mixed>>|null $line_adjustments
  * @property int $line_net_minor
  * @property string $tax_rate
  * @property string $tax_category
@@ -104,6 +106,7 @@ class DocumentLine extends Model implements TaxableLine
             'position' => 'integer',
             'unit_price_minor' => 'integer',
             'discount_minor' => 'integer',
+            'line_adjustments' => 'array',
             'line_net_minor' => 'integer',
         ];
     }
