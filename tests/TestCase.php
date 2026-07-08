@@ -31,6 +31,11 @@ abstract class TestCase extends Orchestra
             'database' => ':memory:',
             'prefix' => '',
         ]);
+
+        // Lifecycle/mechanics tests use minimal fixtures; the §14 content gate is
+        // exercised explicitly in ContentValidationTest (which re-enables it). The
+        // shipped config default is true (fail-closed).
+        $app['config']->set('gobd-invoice.content_validation', false);
     }
 
     protected function defineDatabaseMigrations(): void

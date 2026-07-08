@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
+use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
@@ -31,6 +32,7 @@ use JohnWink\GobdInvoice\ValueObjects\DocumentTotals;
 use JohnWink\GobdInvoice\ValueObjects\ExchangeRate;
 use JohnWink\GobdInvoice\ValueObjects\LineInput;
 use JohnWink\GobdInvoice\ValueObjects\Money;
+use JohnWink\GobdInvoice\ValueObjects\Party;
 use JohnWink\GobdInvoice\ValueObjects\PaymentTerms;
 use JohnWink\GobdInvoice\ValueObjects\TaxBreakdown;
 use JohnWink\GobdInvoice\ValueObjects\TaxBreakdownLine;
@@ -49,6 +51,7 @@ final readonly class GobdInvoiceManager
     public function __construct(
         private NumberSequenceGenerator $numberSequenceGenerator,
         private DocumentTotalsCalculator $documentTotalsCalculator,
+        private DocumentContentValidator $documentContentValidator,
         private AuditLogger $auditLogger,
         private ContentHasher $contentHasher,
     ) {}
@@ -96,6 +99,8 @@ final readonly class GobdInvoiceManager
         $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
         $document->payment_terms = $this->normalizePaymentTerms($attributes['payment_terms'] ?? null);
         $document->accounting_rate = $this->normalizeAccountingRate($attributes['accounting_rate'] ?? null);
+        $document->seller = $this->normalizeParty($attributes['seller'] ?? null);
+        $document->buyer = $this->normalizeParty($attributes['buyer'] ?? null);
 
         if (isset($attributes['meta']) && is_array($attributes['meta'])) {
             /** @var array<string, mixed> $meta */
@@ -150,6 +155,14 @@ final readonly class GobdInvoiceManager
         // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
         DB::transaction(function () use ($document, $issuedAt, $series, $number): void {
             $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
+            $this->applyTotals($document, $documentTotals);
+
+            // Fail closed: a tax-relevant document missing a §14 Abs. 4 mandatory
+            // field must not be festgeschrieben. Validate BEFORE allocating the
+            // number so a rejected finalize never burns one (gapless generator).
+            if (Config::boolean('gobd-invoice.content_validation', true)) {
+                $this->documentContentValidator->validate($document);
+            }
 
             $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
 
@@ -157,7 +170,6 @@ final readonly class GobdInvoiceManager
             $document->series = $number->series;
             $document->year = $number->year;
             $document->sequence = $number->sequence;
-            $this->applyTotals($document, $documentTotals);
             $document->issue_date = $issuedAt;
 
             [$document->retention_class, $document->retention_until] = $this->retentionFor($document, $issuedAt);
@@ -259,6 +271,8 @@ final readonly class GobdInvoiceManager
                 'is_financial_sector' => $document->is_financial_sector,
                 'adjustments' => $stornoAdjustments,
                 'accounting_rate' => $document->accounting_rate,
+                'seller' => $document->seller,
+                'buyer' => $document->buyer,
                 'meta' => ['reason' => $reason, 'storno_of' => $document->number],
             ], $stornoLines);
 
@@ -608,6 +622,8 @@ final readonly class GobdInvoiceManager
             'document_adjustments' => $document->document_adjustments,
             'payment_terms' => $document->payment_terms,
             'accounting_rate' => $document->accounting_rate,
+            'seller' => $document->seller,
+            'buyer' => $document->buyer,
             'lines' => $document->lines->map(static fn (DocumentLine $documentLine): array => [
                 'position' => $documentLine->position,
                 'description' => $documentLine->description,
@@ -637,6 +653,18 @@ final readonly class GobdInvoiceManager
             'vat' => $taxBreakdownLine->vat->minorUnits,
             'gross' => $taxBreakdownLine->gross->minorUnits,
         ], $taxBreakdown->lines);
+    }
+
+    /**
+     * @return array<string, string|null>|null
+     */
+    private function normalizeParty(mixed $raw): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        return Party::fromArray($raw)->toArray();
     }
 
     private function parseDate(mixed $value): ?Carbon

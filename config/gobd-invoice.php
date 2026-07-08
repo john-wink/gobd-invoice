@@ -187,6 +187,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Content validation (§14 UStG Pflichtangaben)
+    |--------------------------------------------------------------------------
+    |
+    | When true, finalize() is fail-closed: a tax-relevant document missing a
+    | §14 Abs. 4 mandatory field (parties, supplier tax id, line description,
+    | time of supply) throws instead of being festgeschrieben. Disable only for
+    | a controlled migration of legacy data. See docs/research/02.
+    |
+    */
+    'content_validation' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Locale
     |--------------------------------------------------------------------------
     */

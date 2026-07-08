@@ -56,6 +56,11 @@ return new class extends Migration
             // cross-driver portability.
             $table->unsignedBigInteger('source_document_id')->nullable()->index();
 
+            // §14 Abs. 4 Nr. 1/2 parties: supplier (leistender Unternehmer) and
+            // recipient (Leistungsempfänger), each name + address + tax ids.
+            $table->json('seller')->nullable();
+            $table->json('buyer')->nullable();
+
             // Optional link to a host-app model (customer, order, …).
             $table->nullableMorphs('documentable');
 

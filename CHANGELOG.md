@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M3 §14 content validation (fail-closed):** a `Party` value object plus
+  `seller` / `buyer` on the document (§14 Abs. 4 Nr. 1/2 parties), and a
+  `DocumentContentValidator` (`MandatoryContentValidator`) that `finalize()` runs
+  before assigning a number: a tax-relevant document missing a §14 mandatory
+  field (parties, supplier Steuernummer/USt-IdNr, line quantity+description, time
+  of supply) throws a `DocumentContentException` instead of being festgeschrieben.
+  The §33 UStDV Kleinbetragsrechnung relaxation (gross ≤ €250 drops the recipient
+  and supplier tax id, unless §13b/§6a) is honoured; non-invoice types are
+  skipped. Parties are part of the immutable snapshot and are carried into the
+  Storno. Toggle via `gobd-invoice.content_validation` (default on).
 - **M3 finalization wiring:** `finalize()` now computes and persists the full
   EN 16931 monetary chain (BT-106 → BT-115 plus BT-111) via the
   `DocumentTotalsCalculator`. `draft()` accepts per-line price modes (`net` /

@@ -10,6 +10,7 @@ use InvalidArgumentException;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
+use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
@@ -23,6 +24,7 @@ use JohnWink\GobdInvoice\Tax\GroupedDocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Tax\GroupedTotalsCalculator;
 use JohnWink\GobdInvoice\Tax\PeriodTaxRateResolver;
 use JohnWink\GobdInvoice\Tax\ThresholdKleinunternehmerRule;
+use JohnWink\GobdInvoice\Validation\MandatoryContentValidator;
 use JohnWink\GobdInvoice\ValueObjects\Money;
 use JohnWink\GobdInvoice\ValueObjects\TaxRatePeriod;
 use Spatie\LaravelPackageTools\Package;
@@ -73,6 +75,7 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
             Money::fromDecimal(Config::string('gobd-invoice.tax.kleinunternehmer_limits.current_year', '100000.00')),
         ));
         $this->app->bind(AuditLogger::class, AppendOnlyAuditLogger::class);
+        $this->app->bind(DocumentContentValidator::class, MandatoryContentValidator::class);
 
         // Let host apps swap the document model (the spatie/laravel-permission pattern).
         $this->app->bind(static function (Application $application): InvoiceDocument {

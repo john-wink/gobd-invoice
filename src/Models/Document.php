@@ -48,6 +48,8 @@ use Override;
  * @property array<int, array<string, mixed>>|null $document_adjustments
  * @property array<string, mixed>|null $payment_terms
  * @property array<string, mixed>|null $accounting_rate
+ * @property array<string, mixed>|null $seller
+ * @property array<string, mixed>|null $buyer
  * @property Carbon|null $issue_date
  * @property Carbon|null $service_date
  * @property Carbon|null $finalized_at
@@ -186,6 +188,7 @@ class Document extends Model implements InvoiceDocument
         'net_total', 'vat_total', 'gross_total',
         'paid_total', 'rounding_total', 'amount_due', 'vat_accounting_total',
         'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
+        'seller', 'buyer',
         'issue_date', 'service_date', 'finalized_at', 'content_hash', 'finalized_payload',
     ];
 
@@ -214,6 +217,8 @@ class Document extends Model implements InvoiceDocument
             'document_adjustments' => 'array',
             'payment_terms' => 'array',
             'accounting_rate' => 'array',
+            'seller' => 'array',
+            'buyer' => 'array',
             'issue_date' => 'date',
             'service_date' => 'date',
             'finalized_at' => 'datetime',
