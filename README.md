@@ -119,8 +119,8 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | Retention window (`retention_until`, 8y/10y) | ✅ M1 |
 | Swappable models, config, events, driver managers | ✅ M0/M1 |
 | PDF/A-3 rendering (dompdf / Gotenberg / Typst) | 🚧 M4 |
-| E-invoicing: EN 16931 CII export (ZUGFeRD / Factur-X / XRechnung) | ✅ M5 (CII export) |
-| E-invoicing: KoSIT validation, XRechnung UBL, PDF/A-3 embed, receive/parse | 🚧 M5 |
+| E-invoicing: EN 16931 CII (ZUGFeRD / Factur-X / XRechnung) + XRechnung UBL export | ✅ M5 |
+| E-invoicing: KoSIT validation, PDF/A-3 embed, receive/parse | 🚧 M5 |
 | Z1/Z2/Z3 (GDPdU) export, DATEV export, IKS hooks | 🚧 M6 |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full 8-month plan to a

@@ -127,7 +127,7 @@ return [
     |
     */
     'einvoice' => [
-        'default_format' => 'zugferd', // zugferd | facturx | xrechnung
+        'default_format' => 'zugferd', // zugferd | facturx | xrechnung (CII) | xrechnung-ubl (UBL)
         'zugferd_profile' => 'en16931',
         // Current as of 2026-06: ZUGFeRD 2.4 / Factur-X 1.08 (in force 2026-01-15).
         'zugferd_version' => '2.4',

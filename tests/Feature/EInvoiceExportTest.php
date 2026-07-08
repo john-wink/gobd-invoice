@@ -6,7 +6,6 @@ use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
 use JohnWink\GobdInvoice\Facades\GobdInvoice;
-use JohnWink\GobdInvoice\Models\Document;
 
 /**
  * @return DOMXPath a namespace-registered XPath over the CII payload (also
@@ -42,14 +41,6 @@ function ciiValues(DOMXPath $xpath, string $query): array
     }
 
     return $values;
-}
-
-function draftWithParties(DocumentType $type, array $lines, array $attributes = []): Document
-{
-    return GobdInvoice::draft($type, array_merge([
-        'seller' => ['name' => 'Muster GmbH', 'address_line' => 'Hauptstr. 1', 'postal_code' => '10115', 'city' => 'Berlin', 'country' => 'DE', 'vat_id' => 'DE123456789'],
-        'buyer' => ['name' => 'Kunde AG', 'address_line' => 'Nebenweg 2', 'postal_code' => '80331', 'city' => 'München', 'country' => 'DE'],
-    ], $attributes), $lines);
 }
 
 it('exports a finalized Rechnung as EN 16931 CII XML', function (): void {

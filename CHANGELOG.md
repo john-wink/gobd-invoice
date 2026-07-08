@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M5 XRechnung UBL export:** an `XRechnungUblSerializer` that converts the
+  XRechnung-CII output to UBL syntax via `horstoeko/zugferdublbridge`, selected by
+  `einvoice.default_format = 'xrechnung-ubl'`. There is one source of truth (the
+  CII mapping); the bridge picks the UBL root document from the EN 16931 type code,
+  so an invoice becomes a UBL `Invoice` and a Storno a UBL `CreditNote`. Adds
+  `horstoeko/zugferdublbridge ^1.0`; see [`docs/dependencies.md`](docs/dependencies.md)
+  for the borrow-vs-build rationale and the KoSIT-XSLT fallback.
 - **M5 e-invoicing — ZUGFeRD / Factur-X / XRechnung CII export (EN 16931):** an
   `EInvoiceSerializer` contract and a `ZugferdCiiSerializer` that map a finalized
   document to EN 16931 Cross-Industry-Invoice XML via `horstoeko/zugferd`, exposed

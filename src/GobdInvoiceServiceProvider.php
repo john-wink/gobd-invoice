@@ -18,6 +18,7 @@ use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Contracts\TaxRateResolver;
 use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
+use JohnWink\GobdInvoice\EInvoice\XRechnungUblSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
@@ -80,10 +81,16 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
         $this->app->bind(DocumentContentValidator::class, MandatoryContentValidator::class);
 
         // E-invoice serialization. ZUGFeRD/Factur-X and XRechnung-CII are all
-        // produced by the CII serializer; the configured format selects the
-        // profile (XRechnung is the German CIUS, otherwise the ZUGFeRD profile).
+        // produced by the CII serializer; 'xrechnung-ubl' converts XRechnung-CII
+        // to UBL syntax. The configured format selects the profile (XRechnung is
+        // the German CIUS, otherwise the ZUGFeRD profile).
         $this->app->bind(static function (): EInvoiceSerializer {
             $format = Config::string('gobd-invoice.einvoice.default_format', 'zugferd');
+
+            if ($format === 'xrechnung-ubl') {
+                return new XRechnungUblSerializer(new ZugferdCiiSerializer('xrechnung'));
+            }
+
             $profile = $format === 'xrechnung'
                 ? 'xrechnung'
                 : Config::string('gobd-invoice.einvoice.zugferd_profile', 'en16931');
