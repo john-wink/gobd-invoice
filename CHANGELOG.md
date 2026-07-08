@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M5 e-invoice receiving / parsing:** an `EInvoiceReader` contract and a
+  `ZugferdCiiReader` that parse an incoming EN 16931 e-invoice — CII **or** UBL
+  (UBL is bridged to CII first, so both syntaxes are accepted) — into a
+  framework-agnostic `ParsedEInvoice` value object (header, seller/buyer parties,
+  the monetary summation BT-106 → BT-115, lines and the VAT breakdown), exposed as
+  `GobdInvoice::parseEInvoice()`. This fulfils the B2B e-invoice **receiving**
+  obligation in force since 2025-01. The values are the sender's declarations,
+  surfaced as-is (the package does not re-compute or trust them). Money is parsed
+  **locale-independently** (`number_format`, never the LC_NUMERIC-sensitive
+  `sprintf('%f')`); a **non-two-decimal currency** (JPY, BHD, …) is **rejected**
+  rather than silently mis-scaled, since the engine's `Money` is two-decimal; an
+  unreadable or malformed payload fails loud with a `GobdInvoiceException`.
 - **M5 XRechnung UBL export:** an `XRechnungUblSerializer` that converts the
   XRechnung-CII output to UBL syntax via `horstoeko/zugferdublbridge`, selected by
   `einvoice.default_format = 'xrechnung-ubl'`. There is one source of truth (the

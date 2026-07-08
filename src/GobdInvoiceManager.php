@@ -15,6 +15,7 @@ use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
@@ -35,6 +36,7 @@ use JohnWink\GobdInvoice\ValueObjects\DocumentTotals;
 use JohnWink\GobdInvoice\ValueObjects\ExchangeRate;
 use JohnWink\GobdInvoice\ValueObjects\LineInput;
 use JohnWink\GobdInvoice\ValueObjects\Money;
+use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
 use JohnWink\GobdInvoice\ValueObjects\Party;
 use JohnWink\GobdInvoice\ValueObjects\PaymentTerms;
 use JohnWink\GobdInvoice\ValueObjects\TaxBreakdown;
@@ -58,6 +60,7 @@ final readonly class GobdInvoiceManager
         private AuditLogger $auditLogger,
         private ContentHasher $contentHasher,
         private EInvoiceSerializer $eInvoiceSerializer,
+        private EInvoiceReader $eInvoiceReader,
     ) {}
 
     /**
@@ -261,6 +264,17 @@ final readonly class GobdInvoiceManager
         $document->loadMissing('lines');
 
         return $this->eInvoiceSerializer->serialize($document);
+    }
+
+    /**
+     * Parse an incoming EN 16931 e-invoice (ZUGFeRD/Factur-X or XRechnung, in CII
+     * or UBL syntax) into a structured {@see ParsedEInvoice}. Fulfils the B2B
+     * e-invoice receiving obligation in force since 2025-01. The returned values
+     * are the sender's declarations, surfaced as-is (not re-computed or trusted).
+     */
+    public function parseEInvoice(string $xml): ParsedEInvoice
+    {
+        return $this->eInvoiceReader->read($xml);
     }
 
     /**

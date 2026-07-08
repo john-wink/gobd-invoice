@@ -12,6 +12,7 @@ use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
@@ -19,6 +20,7 @@ use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Contracts\TaxRateResolver;
 use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
 use JohnWink\GobdInvoice\EInvoice\XRechnungUblSerializer;
+use JohnWink\GobdInvoice\EInvoice\ZugferdCiiReader;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
@@ -97,6 +99,9 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
 
             return new ZugferdCiiSerializer($profile);
         });
+
+        // Incoming e-invoices: parse CII and UBL alike into a ParsedEInvoice.
+        $this->app->bind(EInvoiceReader::class, ZugferdCiiReader::class);
 
         // Let host apps swap the document model (the spatie/laravel-permission pattern).
         $this->app->bind(static function (Application $application): InvoiceDocument {

@@ -89,6 +89,11 @@ $storno = GobdInvoice::cancel($invoice, 'Kunde hat storniert');
 // 5. Export the finalized invoice as an EN 16931 e-invoice (ZUGFeRD/Factur-X or
 //    XRechnung CII XML, per the configured einvoice.default_format / profile).
 $xml = GobdInvoice::eInvoiceXml($invoice);
+
+// 6. Receive: parse an incoming e-invoice (CII or UBL) into a value object.
+$parsed = GobdInvoice::parseEInvoice($incomingXml);
+$parsed->number;                  // BT-1
+$parsed->grandTotal->minorUnits;  // BT-112, integer minor units
 ```
 
 Mutating a finalized document throws — immutability is enforced at the model level:
@@ -120,7 +125,8 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | Swappable models, config, events, driver managers | ✅ M0/M1 |
 | PDF/A-3 rendering (dompdf / Gotenberg / Typst) | 🚧 M4 |
 | E-invoicing: EN 16931 CII (ZUGFeRD / Factur-X / XRechnung) + XRechnung UBL export | ✅ M5 |
-| E-invoicing: KoSIT validation, PDF/A-3 embed, receive/parse | 🚧 M5 |
+| E-invoicing: receive & parse incoming CII / UBL into a value object | ✅ M5 |
+| E-invoicing: KoSIT Schematron validation, PDF/A-3 embed | 🚧 M5 |
 | Z1/Z2/Z3 (GDPdU) export, DATEV export, IKS hooks | 🚧 M6 |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full 8-month plan to a
