@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M3 document conversion:** `GobdInvoice::convert()` turns a pre-invoice
+  document (Angebot, Kostenvoranschlag, Leistungsnachweis) into an invoice draft
+  (Rechnung, Abschlags-/Schlussrechnung), copying its lines, parties and
+  document-level allowances/charges/payment-terms/rate forward and keeping a
+  `source_document_id` audit link (offer → contract → invoice). Allowed pairs are
+  gated by `DocumentType::canConvertTo()`; the conversion preserves the source
+  currency (no FX) and the §14 Abs. 5 cross-order advance guard applies (a
+  converted Schlussrechnung cannot deduct a different order's advance). `draft()`
+  now also accepts raw `documentable_type`/`documentable_id` and
+  `source_document_id` attributes.
 - **M3 Schlussrechnung double-VAT gate (§14 Abs. 5):** an `AdvanceDeduction`
   value object and a `deducts` draft key that references prior finalized
   Abschlagsrechnungen by id; the manager snapshots each advance's net + VAT (as

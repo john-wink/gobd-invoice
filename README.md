@@ -111,6 +111,7 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | Schlussrechnung double-VAT gate — advance net + VAT deduction (§14 Abs. 5) | ✅ M3 |
 | Immutability guard + insert-only, hash-chained audit log | ✅ M3 (core) |
 | Storno / cancellation (Storno statt Löschen) | ✅ M3 (core) |
+| Document conversion (Angebot/Leistungsnachweis → invoice, source-linked) | ✅ M3 |
 | Retention window (`retention_until`, 8y/10y) | ✅ M1 |
 | Swappable models, config, events, driver managers | ✅ M0/M1 |
 | PDF/A-3 rendering (dompdf / Gotenberg / Typst) | 🚧 M4 |

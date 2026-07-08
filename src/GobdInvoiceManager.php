@@ -104,10 +104,19 @@ final readonly class GobdInvoiceManager
         $document->seller = $this->normalizeParty($attributes['seller'] ?? null);
         $document->buyer = $this->normalizeParty($attributes['buyer'] ?? null);
 
-        // Associate the host model BEFORE resolving advance deductions so each
-        // deducted advance can be checked to belong to the same order (§14 Abs. 5).
+        // Establish the host link and source link BEFORE resolving advance
+        // deductions (so the cross-order guard sees the order) and before the
+        // DocumentDrafted event (so listeners see a fully-linked draft).
         if (($attributes['documentable'] ?? null) instanceof Model) {
             $document->documentable()->associate($attributes['documentable']);
+        } elseif (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
+            // Raw morph columns, e.g. carried forward by convert() without a Model.
+            $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
+            $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
+        }
+
+        if (isset($attributes['source_document_id'])) {
+            $document->source_document_id = $this->toIntOrFail($attributes['source_document_id'], 'source_document_id');
         }
 
         $document->advance_deductions = $this->resolveAdvanceDeductions(
@@ -310,6 +319,61 @@ final readonly class GobdInvoiceManager
         event(new DocumentCancelled($document, $storno));
 
         return $storno;
+    }
+
+    /**
+     * Convert a pre-invoice document (Angebot, Kostenvoranschlag,
+     * Leistungsnachweis) into a new invoice DRAFT of the given type, copying its
+     * line items and parties forward and keeping a `source_document_id` link so
+     * the audit chain (offer → contract → invoice) is reconstructable. Overrides
+     * may add/replace draft attributes (e.g. `deducts` when converting to a
+     * Schlussrechnung). Corrections/cancellations are NOT conversions — use
+     * {@see self::cancel()}.
+     *
+     * @param  array<string, mixed>  $overrides
+     */
+    public function convert(Document $document, DocumentType $documentType, array $overrides = []): Document
+    {
+        throw_unless($document->type->canConvertTo($documentType), GobdInvoiceException::class, "A [{$document->type->value}] cannot be converted to a [{$documentType->value}].");
+
+        $document->loadMissing('lines');
+
+        $lines = $document->lines->map(static fn (DocumentLine $documentLine): array => [
+            'description' => $documentLine->description,
+            'quantity' => $documentLine->quantity,
+            'unit' => $documentLine->unit,
+            'unit_price_minor' => $documentLine->unit_price_minor,
+            'price_mode' => $documentLine->price_mode,
+            'discount_minor' => $documentLine->discount_minor,
+            'adjustments' => $documentLine->line_adjustments,
+            'tax_rate' => $documentLine->tax_rate,
+            'tax_category' => $documentLine->tax_category,
+        ])->all();
+
+        $attributes = array_merge([
+            'service_date' => $document->service_date,
+            'seller' => $document->seller,
+            'buyer' => $document->buyer,
+            'adjustments' => $document->document_adjustments,
+            'payment_terms' => $document->payment_terms,
+            'accounting_rate' => $document->accounting_rate,
+            'meta' => $document->meta,
+        ], $overrides);
+        unset($attributes['lines']);
+
+        // Conversion copies minor-unit amounts verbatim, so it preserves the
+        // source currency (no FX); a currency override would silently mis-value
+        // the lines. The source link is passed to draft() so it is set before the
+        // advance-deduction cross-order guard and the DocumentDrafted event.
+        $attributes['currency'] = $document->currency;
+        $attributes['source_document_id'] = $document->id;
+
+        if (! array_key_exists('documentable', $overrides) && $document->documentable_type !== null && $document->documentable_id !== null) {
+            $attributes['documentable_type'] = $document->documentable_type;
+            $attributes['documentable_id'] = $document->documentable_id;
+        }
+
+        return $this->draft($documentType, $attributes, $lines);
     }
 
     /**

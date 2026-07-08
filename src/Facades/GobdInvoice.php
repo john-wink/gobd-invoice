@@ -14,6 +14,7 @@ use JohnWink\GobdInvoice\Models\Document;
  * @method static Document finalize(Document $document)
  * @method static bool verify(Document $document)
  * @method static Document cancel(Document $document, string $reason)
+ * @method static Document convert(Document $document, DocumentType $target, array<string, mixed> $overrides = [])
  *
  * @see GobdInvoiceManager
  */

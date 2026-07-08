@@ -91,6 +91,23 @@ enum DocumentType: string
     }
 
     /**
+     * Whether a pre-invoice document (Angebot, Kostenvoranschlag,
+     * Leistungsnachweis) may be converted into the given invoice type, copying
+     * its line items forward and keeping a `source_document_id` audit link (offer
+     * → contract → invoice). Corrections/cancellations are NOT conversions — use
+     * a linked Storno instead. See docs/research/05-document-types-and-lifecycle.md.
+     */
+    public function canConvertTo(self $target): bool
+    {
+        return match ($this) {
+            self::Angebot,
+            self::Kostenvoranschlag,
+            self::Leistungsnachweis => in_array($target, [self::Rechnung, self::Abschlagsrechnung, self::Schlussrechnung], true),
+            default => false,
+        };
+    }
+
+    /**
      * Whether the literal label "Gutschrift" is reserved for self-billing only
      * (§14 Abs. 2 UStG). A correction of your own invoice must NOT be labelled
      * Gutschrift — use {@see self::Storno}.
