@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JohnWink\GobdInvoice\Validation;
 
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
+use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Exceptions\DocumentContentException;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Models\DocumentLine;
@@ -14,7 +15,9 @@ use JohnWink\GobdInvoice\ValueObjects\Party;
  * The default {@see DocumentContentValidator}: enforces the §14 Abs. 4 UStG
  * mandatory fields on tax-relevant documents, with the §33 UStDV
  * Kleinbetragsrechnung relaxation (gross ≤ €250 drops the recipient and the
- * supplier tax id). Non-invoice types (Angebot, Mahnung, …) are skipped.
+ * supplier tax id). Non-invoice types (Angebot, Mahnung, …) and the auto-
+ * generated Storno reversal (whose content mirrors its finalized original) are
+ * skipped.
  *
  * Scope of this check: Nr. 1 (both parties' name + address), Nr. 2 (supplier
  * Steuernummer/USt-IdNr), Nr. 5 (quantity + description per line) and Nr. 6
@@ -29,6 +32,14 @@ final class MandatoryContentValidator implements DocumentContentValidator
     public function validate(Document $document): void
     {
         if (! $document->type->isTaxRelevant()) {
+            return;
+        }
+
+        // A Storno is an auto-generated reversal that mirrors an already-finalized
+        // original (its §14 content is inherited, not authored here). Gating it on
+        // §14 would make a defective original impossible to cancel — but
+        // Storno statt Löschen must always be possible, so it is not re-validated.
+        if ($document->type === DocumentType::Storno) {
             return;
         }
 
@@ -80,11 +91,16 @@ final class MandatoryContentValidator implements DocumentContentValidator
 
     private function isKleinbetrag(Document $document): bool
     {
-        // §33 UStDV needs gross ≤ €250 AND none of §3c/§6a/§13b (distance sale,
-        // intra-community, reverse charge) — those always need the full §14 set.
+        // §33 UStDV needs a total of ≤ €250 (magnitude — a negative-total credit
+        // document is never a Kleinbetrag), AND not §6a (intra-community, category
+        // K) or §13b (reverse charge, category AE), which always need the full §14
+        // set. LIMITATION: §3c distance sales are also excluded by §33 but carry
+        // no distinct marker in the model (they are standard-rated), so they are
+        // NOT auto-detected here — a host issuing EU distance sales must supply
+        // the full §14 data. See docs/research/02 (Open Questions).
         $gross = $document->gross_total;
 
-        if ($gross === null || $gross > self::KLEINBETRAG_LIMIT_MINOR) {
+        if ($gross === null || abs($gross) > self::KLEINBETRAG_LIMIT_MINOR) {
             return false;
         }
 

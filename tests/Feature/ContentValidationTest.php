@@ -115,7 +115,7 @@ it('skips §14 validation for a non-invoice document type', function (): void {
     expect($document->status)->toBe(DocumentStatus::Finalized);
 });
 
-it('carries the parties into the Storno so it too passes §14 validation', function (): void {
+it('carries the parties into the Storno', function (): void {
     $invoice = GobdInvoice::finalize(GobdInvoice::draft(DocumentType::Rechnung, [
         'seller' => completeSeller(),
         'buyer' => completeBuyer(),
@@ -129,4 +129,22 @@ it('carries the parties into the Storno so it too passes §14 validation', funct
     expect($storno->type)->toBe(DocumentType::Storno)
         ->and($storno->seller)->toMatchArray(['name' => 'Muster GmbH'])
         ->and($storno->gross_total)->toBe(-11900);
+});
+
+it('can still Storno a §14-incomplete original after validation is enabled', function (): void {
+    // A Storno is a reversal of an already-finalized original, so it is never
+    // itself §14-gated — otherwise a document finalized while validation was off
+    // could never be cancelled (Storno statt Löschen must always be possible).
+    config()->set('gobd-invoice.content_validation', false);
+
+    $invoice = GobdInvoice::finalize(GobdInvoice::draft(DocumentType::Rechnung, [], [
+        ['description' => 'Leistung', 'quantity' => '1', 'unit_price' => '500.00', 'tax_rate' => '19.0'],
+    ]));
+
+    config()->set('gobd-invoice.content_validation', true);
+
+    $storno = GobdInvoice::cancel($invoice, 'Korrektur');
+
+    expect($storno->type)->toBe(DocumentType::Storno)
+        ->and($storno->gross_total)->toBe(-59500);
 });
