@@ -32,8 +32,15 @@
         "horstoeko/zugferd": "^1.0",
         "horstoeko/zugferdublbridge": "^1.0",
         "illuminate/contracts": "^13.0",
+        "john-wink/en16931-php": "dev-main",
         "spatie/laravel-package-tools": "^1.92"
     },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/john-wink/en16931-php"
+        }
+    ],
     "require-dev": {
         "larastan/larastan": "^3.0",
         "laravel/pint": "^1.18",

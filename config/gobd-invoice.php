@@ -133,6 +133,9 @@ return [
         'zugferd_version' => '2.4',
         'xrechnung_version' => '3.0.2',
         'validate_on_finalize' => true,
+        // When true, eInvoiceXml() validates the produced XML against the EN 16931
+        // rules (native, Java-free) and throws on a fatal violation.
+        'validate_on_export' => false,
     ],
 
     /*

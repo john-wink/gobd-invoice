@@ -94,6 +94,11 @@ $xml = GobdInvoice::eInvoiceXml($invoice);
 $parsed = GobdInvoice::parseEInvoice($incomingXml);
 $parsed->number;                  // BT-1
 $parsed->grandTotal->minorUnits;  // BT-112, integer minor units
+
+// 7. Validate against EN 16931 — natively, no Java (john-wink/en16931-php).
+$report = GobdInvoice::validateEInvoice($xml);
+$report->isValid();               // bool
+$report->violations;              // list of fired rules (BR-*, BR-CO-*, BR-DE-*)
 ```
 
 Mutating a finalized document throws — immutability is enforced at the model level:
@@ -126,7 +131,8 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | PDF/A-3 rendering (dompdf / Gotenberg / Typst) | 🚧 M4 |
 | E-invoicing: EN 16931 CII (ZUGFeRD / Factur-X / XRechnung) + XRechnung UBL export | ✅ M5 |
 | E-invoicing: receive & parse incoming CII / UBL into a value object | ✅ M5 |
-| E-invoicing: KoSIT Schematron validation, PDF/A-3 embed | 🚧 M5 |
+| E-invoicing: native (Java-free) EN 16931 validation (`john-wink/en16931-php`) | ✅ M5 |
+| E-invoicing: full KoSIT-corpus validation parity, PDF/A-3 embed | 🚧 M5 |
 | Z1/Z2/Z3 (GDPdU) export, DATEV export, IKS hooks | 🚧 M6 |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full 8-month plan to a

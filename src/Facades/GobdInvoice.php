@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JohnWink\GobdInvoice\Facades;
 
 use Illuminate\Support\Facades\Facade;
+use JohnWink\En16931\ValidationResult;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\GobdInvoiceManager;
 use JohnWink\GobdInvoice\Models\Document;
@@ -16,6 +17,7 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
  * @method static bool verify(Document $document)
  * @method static string eInvoiceXml(Document $document)
  * @method static ParsedEInvoice parseEInvoice(string $xml)
+ * @method static ValidationResult validateEInvoice(string $xml)
  * @method static Document cancel(Document $document, string $reason)
  * @method static Document convert(Document $document, DocumentType $target, array<string, mixed> $overrides = [])
  *

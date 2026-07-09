@@ -11,12 +11,15 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use JohnWink\En16931\ValidationResult;
+use JohnWink\En16931\Violation;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
+use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
@@ -61,6 +64,7 @@ final readonly class GobdInvoiceManager
         private ContentHasher $contentHasher,
         private EInvoiceSerializer $eInvoiceSerializer,
         private EInvoiceReader $eInvoiceReader,
+        private EInvoiceValidator $eInvoiceValidator,
     ) {}
 
     /**
@@ -263,7 +267,23 @@ final readonly class GobdInvoiceManager
     {
         $document->loadMissing('lines');
 
-        return $this->eInvoiceSerializer->serialize($document);
+        $xml = $this->eInvoiceSerializer->serialize($document);
+
+        if (Config::boolean('gobd-invoice.einvoice.validate_on_export', false)) {
+            $result = $this->eInvoiceValidator->validate($xml);
+            throw_unless($result->isValid(), GobdInvoiceException::class, 'The exported e-invoice is not EN 16931 conformant: '.$this->summarizeViolations($result));
+        }
+
+        return $xml;
+    }
+
+    /**
+     * Validate an e-invoice payload (CII or UBL) against the EN 16931 / XRechnung
+     * business rules using the native, Java-free engine. Returns the full report.
+     */
+    public function validateEInvoice(string $xml): ValidationResult
+    {
+        return $this->eInvoiceValidator->validate($xml);
     }
 
     /**
@@ -275,6 +295,11 @@ final readonly class GobdInvoiceManager
     public function parseEInvoice(string $xml): ParsedEInvoice
     {
         return $this->eInvoiceReader->read($xml);
+    }
+
+    private function summarizeViolations(ValidationResult $validationResult): string
+    {
+        return implode(', ', array_map(static fn (Violation $violation): string => $violation->ruleId, $validationResult->fatals()));
     }
 
     /**

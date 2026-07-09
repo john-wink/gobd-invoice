@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M5 EN 16931 validation (native, Java-free):** an `EInvoiceValidator` contract
+  and a `NativeEInvoiceValidator` driver backed by the new, dependency-free
+  [`john-wink/en16931-php`](https://github.com/john-wink/en16931-php) engine — **no
+  KoSIT jar, no JRE, no subprocess**. Exposed as `GobdInvoice::validateEInvoice()`;
+  accepts CII and UBL (UBL is bridged to CII first). Setting
+  `einvoice.validate_on_export` makes `eInvoiceXml()` validate the produced XML and
+  throw on a fatal EN 16931 violation, so a non-conformant e-invoice cannot be
+  emitted. XRechnung formats add the German CIUS rules (BR-DE-*) on top of the
+  EN 16931 core. The validator ships a growing high-value rule subset (presence,
+  the tolerance-free BR-CO-* calculations, VAT-category and code-list rules, the
+  Leitweg-ID); full KoSIT-corpus parity is the ongoing goal.
 - **M5 e-invoice receiving / parsing:** an `EInvoiceReader` contract and a
   `ZugferdCiiReader` that parse an incoming EN 16931 e-invoice — CII **or** UBL
   (UBL is bridged to CII first, so both syntaxes are accepted) — into a

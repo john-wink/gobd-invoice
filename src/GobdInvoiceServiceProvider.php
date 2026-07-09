@@ -7,6 +7,7 @@ namespace JohnWink\GobdInvoice;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Config;
 use InvalidArgumentException;
+use JohnWink\En16931\En16931Validator;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
@@ -14,11 +15,13 @@ use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
+use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Contracts\TaxRateResolver;
 use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
+use JohnWink\GobdInvoice\EInvoice\NativeEInvoiceValidator;
 use JohnWink\GobdInvoice\EInvoice\XRechnungUblSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiReader;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
@@ -102,6 +105,17 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
 
         // Incoming e-invoices: parse CII and UBL alike into a ParsedEInvoice.
         $this->app->bind(EInvoiceReader::class, ZugferdCiiReader::class);
+
+        // EN 16931 validation via the native, Java-free engine. XRechnung formats
+        // get the German CIUS rules on top of the EN 16931 core.
+        $this->app->bind(static function (): EInvoiceValidator {
+            $format = Config::string('gobd-invoice.einvoice.default_format', 'zugferd');
+            $engine = str_starts_with($format, 'xrechnung')
+                ? En16931Validator::xrechnung()
+                : En16931Validator::en16931();
+
+            return new NativeEInvoiceValidator($engine);
+        });
 
         // Let host apps swap the document model (the spatie/laravel-permission pattern).
         $this->app->bind(static function (Application $application): InvoiceDocument {
