@@ -136,7 +136,8 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | E-invoicing: receive & parse incoming CII / UBL into a value object | ✅ M5 |
 | E-invoicing: native (Java-free) EN 16931 validation (`john-wink/en16931-php`) | ✅ M5 |
 | E-invoicing: full KoSIT-corpus validation parity, PDF/A-3 embed | 🚧 M5 |
-| Z1/Z2/Z3 (GDPdU) export, DATEV export, IKS hooks | 🚧 M6 |
+| Z3 GDPdU data export (tax-audit Datenträgerüberlassung) | ✅ M6 |
+| DATEV (EXTF) export, IKS hooks | 🚧 M6 |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full 8-month plan to a
 Laracon-ready 1.0.

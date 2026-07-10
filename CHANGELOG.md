@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M6 GoBD / GDPdU data export (Z3):** a `GobdDataExporter` contract and a
+  `GdpduExporter` producing a tax-audit "Datenträgerüberlassung" data set — the
+  `rechnungen.csv` and `positionen.csv` tables plus the `index.xml` GDPdU
+  descriptor (columns defined positionally, decimal point, semicolon-delimited,
+  quoted, CRLF) — exposed as `GobdInvoice::exportGdpdu($documents)`. The host
+  supplies the documents (e.g. a date-range query); finalized documents are never
+  deletable (the retention/immutability guard already enforces this).
 - **M4 hybrid PDF/A-3 (ZUGFeRD / Factur-X):** an `EInvoicePdfBuilder` contract and
   a `ZugferdPdfBuilder` that embed the finalized document's CII XML into a
   host-supplied base PDF (via `horstoeko/zugferd`), yielding a hybrid PDF/A-3 —

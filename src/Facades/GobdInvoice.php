@@ -19,6 +19,7 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
  * @method static string eInvoicePdf(Document $document, string $basePdf)
  * @method static ParsedEInvoice parseEInvoice(string $xml)
  * @method static ValidationResult validateEInvoice(string $xml)
+ * @method static array<string, string> exportGdpdu(iterable<Document> $documents)
  * @method static Document cancel(Document $document, string $reason)
  * @method static Document convert(Document $document, DocumentType $target, array<string, mixed> $overrides = [])
  *

@@ -17,6 +17,7 @@ use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
+use JohnWink\GobdInvoice\Contracts\GobdDataExporter;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
@@ -27,6 +28,7 @@ use JohnWink\GobdInvoice\EInvoice\XRechnungUblSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiReader;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdPdfBuilder;
+use JohnWink\GobdInvoice\Export\GdpduExporter;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
 use JohnWink\GobdInvoice\Numbering\LockingSequenceGenerator;
@@ -129,6 +131,9 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
 
             return new ZugferdPdfBuilder(new ZugferdCiiSerializer($profile));
         });
+
+        // GoBD/GDPdU (Z3) data export for tax-audit data access.
+        $this->app->bind(GobdDataExporter::class, GdpduExporter::class);
 
         // Let host apps swap the document model (the spatie/laravel-permission pattern).
         $this->app->bind(static function (Application $application): InvoiceDocument {

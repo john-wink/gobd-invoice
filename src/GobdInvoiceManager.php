@@ -21,6 +21,7 @@ use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
+use JohnWink\GobdInvoice\Contracts\GobdDataExporter;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
@@ -67,6 +68,7 @@ final readonly class GobdInvoiceManager
         private EInvoiceReader $eInvoiceReader,
         private EInvoiceValidator $eInvoiceValidator,
         private EInvoicePdfBuilder $eInvoicePdfBuilder,
+        private GobdDataExporter $gobdDataExporter,
     ) {}
 
     /**
@@ -286,6 +288,19 @@ final readonly class GobdInvoiceManager
     public function eInvoicePdf(Document $document, string $basePdf): string
     {
         return $this->eInvoicePdfBuilder->build($document, $basePdf);
+    }
+
+    /**
+     * Export the given (finalized) documents as a GDPdU data set for tax-audit
+     * data access (Z3) — the CSV tables plus the index.xml descriptor, keyed by
+     * filename. The host supplies the documents (e.g. a date-range query).
+     *
+     * @param  iterable<Document>  $documents
+     * @return array<string, string>
+     */
+    public function exportGdpdu(iterable $documents): array
+    {
+        return $this->gobdDataExporter->export($documents);
     }
 
     /**
