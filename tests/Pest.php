@@ -38,6 +38,7 @@ function draftWithParties(DocumentType $documentType, array $lines, array $attri
     return GobdInvoice::draft($documentType, array_merge([
         'seller' => ['name' => 'Muster GmbH', 'address_line' => 'Hauptstr. 1', 'postal_code' => '10115', 'city' => 'Berlin', 'country' => 'DE', 'vat_id' => 'DE123456789'],
         'buyer' => ['name' => 'Kunde AG', 'address_line' => 'Nebenweg 2', 'postal_code' => '80331', 'city' => 'München', 'country' => 'DE'],
+        'payment_terms' => ['net_days' => 30, 'note' => 'Zahlbar innerhalb von 30 Tagen.'],
     ], $attributes), $lines);
 }
 
