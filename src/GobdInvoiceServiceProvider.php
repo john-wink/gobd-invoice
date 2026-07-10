@@ -13,6 +13,7 @@ use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
@@ -25,6 +26,7 @@ use JohnWink\GobdInvoice\EInvoice\NativeEInvoiceValidator;
 use JohnWink\GobdInvoice\EInvoice\XRechnungUblSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiReader;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
+use JohnWink\GobdInvoice\EInvoice\ZugferdPdfBuilder;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
 use JohnWink\GobdInvoice\Numbering\LockingSequenceGenerator;
@@ -115,6 +117,17 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
                 : En16931Validator::en16931();
 
             return new NativeEInvoiceValidator($engine);
+        });
+
+        // Hybrid ZUGFeRD/Factur-X PDF/A-3: embed the CII XML into a base PDF.
+        // Always a CII profile (UBL is never embedded in a PDF/A-3).
+        $this->app->bind(static function (): EInvoicePdfBuilder {
+            $format = Config::string('gobd-invoice.einvoice.default_format', 'zugferd');
+            $profile = str_starts_with($format, 'xrechnung')
+                ? 'xrechnung'
+                : Config::string('gobd-invoice.einvoice.zugferd_profile', 'en16931');
+
+            return new ZugferdPdfBuilder(new ZugferdCiiSerializer($profile));
         });
 
         // Let host apps swap the document model (the spatie/laravel-permission pattern).

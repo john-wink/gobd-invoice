@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M4 hybrid PDF/A-3 (ZUGFeRD / Factur-X):** an `EInvoicePdfBuilder` contract and
+  a `ZugferdPdfBuilder` that embed the finalized document's CII XML into a
+  host-supplied base PDF (via `horstoeko/zugferd`), yielding a hybrid PDF/A-3 —
+  exposed as `GobdInvoice::eInvoicePdf($document, $basePdf)`. The visual PDF is
+  rendered by the host; this package owns the compliant embedding. Round-trips
+  through the PDF reader (the embedded XML is extractable and parses back to the
+  invoice). `ZugferdCiiSerializer` now exposes `buildDocument()` so the PDF path
+  reuses the exact same EN 16931 mapping as the XML export.
 - **M5 EN 16931 validation (native, Java-free):** an `EInvoiceValidator` contract
   and a `NativeEInvoiceValidator` driver backed by the new, dependency-free
   [`john-wink/en16931-php`](https://github.com/john-wink/en16931-php) engine — **no

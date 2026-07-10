@@ -99,6 +99,9 @@ $parsed->grandTotal->minorUnits;  // BT-112, integer minor units
 $report = GobdInvoice::validateEInvoice($xml);
 $report->isValid();               // bool
 $report->violations;              // list of fired rules (BR-*, BR-CO-*, BR-DE-*)
+
+// 8. Hybrid PDF/A-3: embed the CII XML into your rendered invoice PDF (ZUGFeRD).
+$zugferdPdf = GobdInvoice::eInvoicePdf($invoice, $renderedInvoicePdf);
 ```
 
 Mutating a finalized document throws — immutability is enforced at the model level:
@@ -128,7 +131,7 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | Document conversion (Angebot/Leistungsnachweis → invoice, source-linked) | ✅ M3 |
 | Retention window (`retention_until`, 8y/10y) | ✅ M1 |
 | Swappable models, config, events, driver managers | ✅ M0/M1 |
-| PDF/A-3 rendering (dompdf / Gotenberg / Typst) | 🚧 M4 |
+| E-invoicing: hybrid ZUGFeRD / Factur-X PDF/A-3 (embed CII into a base PDF) | ✅ M4 |
 | E-invoicing: EN 16931 CII (ZUGFeRD / Factur-X / XRechnung) + XRechnung UBL export | ✅ M5 |
 | E-invoicing: receive & parse incoming CII / UBL into a value object | ✅ M5 |
 | E-invoicing: native (Java-free) EN 16931 validation (`john-wink/en16931-php`) | ✅ M5 |

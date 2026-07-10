@@ -17,6 +17,7 @@ use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
@@ -65,6 +66,7 @@ final readonly class GobdInvoiceManager
         private EInvoiceSerializer $eInvoiceSerializer,
         private EInvoiceReader $eInvoiceReader,
         private EInvoiceValidator $eInvoiceValidator,
+        private EInvoicePdfBuilder $eInvoicePdfBuilder,
     ) {}
 
     /**
@@ -275,6 +277,15 @@ final readonly class GobdInvoiceManager
         }
 
         return $xml;
+    }
+
+    /**
+     * Embed the finalized document's CII XML into the supplied base PDF, yielding
+     * a hybrid ZUGFeRD/Factur-X PDF/A-3. The visual PDF is rendered by the host.
+     */
+    public function eInvoicePdf(Document $document, string $basePdf): string
+    {
+        return $this->eInvoicePdfBuilder->build($document, $basePdf);
     }
 
     /**

@@ -16,6 +16,7 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
  * @method static Document finalize(Document $document)
  * @method static bool verify(Document $document)
  * @method static string eInvoiceXml(Document $document)
+ * @method static string eInvoicePdf(Document $document, string $basePdf)
  * @method static ParsedEInvoice parseEInvoice(string $xml)
  * @method static ValidationResult validateEInvoice(string $xml)
  * @method static Document cancel(Document $document, string $reason)

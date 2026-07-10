@@ -90,6 +90,15 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
 
     public function serialize(Document $document): string
     {
+        return $this->buildDocument($document)->getContent();
+    }
+
+    /**
+     * Build the horstoeko document (the EN 16931 mapping) without serializing it,
+     * so the PDF/A-3 builder can embed the same document into a PDF.
+     */
+    public function buildDocument(Document $document): ZugferdDocumentBuilder
+    {
         throw_if($document->status !== DocumentStatus::Finalized, GobdInvoiceException::class, 'Only a finalized document can be exported as an EN 16931 e-invoice.');
 
         if (! $document->type->canEmitEInvoice()) {
@@ -128,7 +137,7 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
         $this->applyTotals($zugferdDocumentBuilder, $document);
         $this->applyForeignCurrency($zugferdDocumentBuilder, $document);
 
-        return $zugferdDocumentBuilder->getContent();
+        return $zugferdDocumentBuilder;
     }
 
     private function resolveProfile(): int
