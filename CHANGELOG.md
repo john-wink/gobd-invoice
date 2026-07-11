@@ -4,8 +4,11 @@ All notable changes to `john-wink/gobd-invoice` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-07-11
 
 ### Added
 
@@ -215,4 +218,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   access, the German document taxonomy, money/VAT/rounding rules, a
   reference/competitor analysis, the package architecture and the quality gates.
 
-[Unreleased]: https://github.com/john-wink/gobd-invoice/commits/main
+[Unreleased]: https://github.com/john-wink/gobd-invoice/compare/v0.1.0...main
+[0.1.0]: https://github.com/john-wink/gobd-invoice/releases/tag/v0.1.0
