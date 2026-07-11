@@ -15,6 +15,7 @@ use JohnWink\GobdInvoice\Contracts\DatevAccountResolver;
 use JohnWink\GobdInvoice\Contracts\DatevExporter;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\DunningInterestCalculator;
 use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
@@ -25,6 +26,7 @@ use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Contracts\TaxRateResolver;
 use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
+use JohnWink\GobdInvoice\Dunning\StatutoryDunningInterestCalculator;
 use JohnWink\GobdInvoice\EInvoice\NativeEInvoiceValidator;
 use JohnWink\GobdInvoice\EInvoice\XRechnungUblSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiReader;
@@ -41,6 +43,7 @@ use JohnWink\GobdInvoice\Tax\GroupedTotalsCalculator;
 use JohnWink\GobdInvoice\Tax\PeriodTaxRateResolver;
 use JohnWink\GobdInvoice\Tax\ThresholdKleinunternehmerRule;
 use JohnWink\GobdInvoice\Validation\MandatoryContentValidator;
+use JohnWink\GobdInvoice\ValueObjects\BasiszinssatzPeriod;
 use JohnWink\GobdInvoice\ValueObjects\Money;
 use JohnWink\GobdInvoice\ValueObjects\TaxRatePeriod;
 use Spatie\LaravelPackageTools\Package;
@@ -89,6 +92,13 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
         $this->app->bind(KleinunternehmerRule::class, static fn (): KleinunternehmerRule => new ThresholdKleinunternehmerRule(
             Money::fromDecimal(Config::string('gobd-invoice.tax.kleinunternehmer_limits.prior_year', '25000.00')),
             Money::fromDecimal(Config::string('gobd-invoice.tax.kleinunternehmer_limits.current_year', '100000.00')),
+        ));
+        // Dunning: §288 default interest built on the §247 Basiszinssatz table.
+        $this->app->bind(DunningInterestCalculator::class, static fn (): DunningInterestCalculator => new StatutoryDunningInterestCalculator(
+            self::configuredBaseRatePeriods(),
+            Config::string('gobd-invoice.dunning.consumer_surcharge_points', '5.0'),
+            Config::string('gobd-invoice.dunning.business_surcharge_points', '9.0'),
+            Config::integer('gobd-invoice.dunning.late_payment_fee_minor', 4000),
         ));
         $this->app->bind(AuditLogger::class, AppendOnlyAuditLogger::class);
         $this->app->bind(DocumentContentValidator::class, MandatoryContentValidator::class);
@@ -178,6 +188,30 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
             throw_if(! is_string($from) || ! is_scalar($standard) || ! is_scalar($reduced) || is_bool($standard) || is_bool($reduced), InvalidArgumentException::class, "gobd-invoice.tax.rate_periods[{$index}] needs a string 'from' date and scalar, non-boolean 'standard'/'reduced' rates.");
 
             $periods[] = new TaxRatePeriod($from, (string) $standard, (string) $reduced);
+        }
+
+        return $periods;
+    }
+
+    /**
+     * Build the configured §247 Basiszinssatz periods for the dunning calculator.
+     * A malformed entry throws — a mis-configured legal rate must fail loud.
+     *
+     * @return array<int, BasiszinssatzPeriod>
+     */
+    private static function configuredBaseRatePeriods(): array
+    {
+        $periods = [];
+
+        foreach (Config::array('gobd-invoice.dunning.base_rate_periods', []) as $index => $entry) {
+            throw_unless(is_array($entry), InvalidArgumentException::class, "gobd-invoice.dunning.base_rate_periods[{$index}] must be an array.");
+
+            $from = $entry['from'] ?? null;
+            $rate = $entry['rate'] ?? null;
+
+            throw_if(! is_string($from) || ! is_scalar($rate) || is_bool($rate), InvalidArgumentException::class, "gobd-invoice.dunning.base_rate_periods[{$index}] needs a string 'from' date and a scalar, non-boolean 'rate'.");
+
+            $periods[] = new BasiszinssatzPeriod($from, (string) $rate);
         }
 
         return $periods;

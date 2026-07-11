@@ -18,6 +18,7 @@ use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DatevExporter;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
+use JohnWink\GobdInvoice\Contracts\DunningInterestCalculator;
 use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
 use JohnWink\GobdInvoice\Contracts\EInvoiceReader;
 use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
@@ -32,6 +33,7 @@ use JohnWink\GobdInvoice\Events\DocumentCancelled;
 use JohnWink\GobdInvoice\Events\DocumentDrafted;
 use JohnWink\GobdInvoice\Events\DocumentFinalized;
 use JohnWink\GobdInvoice\Exceptions\DocumentContentException;
+use JohnWink\GobdInvoice\Exceptions\DunningException;
 use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
 use JohnWink\GobdInvoice\Exceptions\InvalidStatusTransitionException;
 use JohnWink\GobdInvoice\Export\Datev\DatevExportOptions;
@@ -40,6 +42,8 @@ use JohnWink\GobdInvoice\Models\DocumentLine;
 use JohnWink\GobdInvoice\ValueObjects\AdvanceDeduction;
 use JohnWink\GobdInvoice\ValueObjects\AllowanceCharge;
 use JohnWink\GobdInvoice\ValueObjects\DocumentTotals;
+use JohnWink\GobdInvoice\ValueObjects\DunningAssessment;
+use JohnWink\GobdInvoice\ValueObjects\DunningOptions;
 use JohnWink\GobdInvoice\ValueObjects\ExchangeRate;
 use JohnWink\GobdInvoice\ValueObjects\LineInput;
 use JohnWink\GobdInvoice\ValueObjects\Money;
@@ -72,6 +76,7 @@ final readonly class GobdInvoiceManager
         private EInvoicePdfBuilder $eInvoicePdfBuilder,
         private GobdDataExporter $gobdDataExporter,
         private DatevExporter $datevExporter,
+        private DunningInterestCalculator $dunningInterestCalculator,
     ) {}
 
     /**
@@ -317,6 +322,51 @@ final readonly class GobdInvoiceManager
     public function exportDatev(iterable $documents, DatevExportOptions $datevExportOptions): string
     {
         return $this->datevExporter->export($documents, $datevExportOptions);
+    }
+
+    /**
+     * Assess the §288 BGB default interest, flat fee and total for an overdue
+     * principal, without creating a document. Interest is opt-in (a goodwill
+     * reminder sets `withInterest: false`). See {@see DunningOptions}.
+     */
+    public function assessDunning(Money $money, DunningOptions $dunningOptions): DunningAssessment
+    {
+        return $this->dunningInterestCalculator->assess($money, $dunningOptions);
+    }
+
+    /**
+     * Create a Mahnung (dunning notice) for an overdue invoice. The overdue
+     * principal is the invoice's amount due (BT-115, gross); the §288
+     * assessment (interest — or none, for a Kulanz reminder — plus fees and the
+     * total) is stored on the Mahnung's metadata. The Mahnung is a non-tax
+     * business document (a draft linked to the invoice via `source_document_id`),
+     * deliberately kept out of the immutable tax record — it never alters the
+     * dunned invoice.
+     */
+    public function dun(Document $document, DunningOptions $dunningOptions): Document
+    {
+        // Only a finalized invoice carries a legal claim to dun; a draft has no
+        // computed totals, so dunning it would be a €0 demand.
+        throw_if($document->finalized_at === null, DunningException::class, "Only a finalized document can be dunned; [{$document->number}] is not finalized.");
+
+        $money = Money::fromMinorUnits(
+            $document->amount_due ?? $document->gross_total ?? 0,
+            $this->toStringValue($document->currency, 'EUR'),
+        );
+
+        $dunningAssessment = $this->dunningInterestCalculator->assess($money, $dunningOptions);
+
+        return $this->draft(DocumentType::Mahnung, [
+            'currency' => $document->currency,
+            'series' => DocumentType::Mahnung->defaultSeries(),
+            'seller' => $document->seller,
+            'buyer' => $document->buyer,
+            'source_document_id' => $document->id,
+            'meta' => [
+                'dunning' => $dunningAssessment->toArray(),
+                'dunned_document' => $document->number,
+            ],
+        ]);
     }
 
     /**

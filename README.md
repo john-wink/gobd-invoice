@@ -113,6 +113,23 @@ $extf = GobdInvoice::exportDatev($finalizedDocuments, new DatevExportOptions(
     fiscalYearStart: new DateTimeImmutable('2026-01-01'),
 ));
 file_put_contents('EXTF_Buchungsstapel.csv', $extf); // already Windows-1252 / CRLF
+
+// 10. Dunning (Mahnung) with §288 default interest — or none, for goodwill.
+use JohnWink\GobdInvoice\Enums\DebtorType;
+use JohnWink\GobdInvoice\ValueObjects\DunningOptions;
+
+$mahnung = GobdInvoice::dun($invoice, new DunningOptions(
+    debtorType: DebtorType::Business,                 // +9 pp and the €40 flat fee
+    interestFrom: new DateTimeImmutable('2026-02-01'), // Verzugsbeginn
+    interestTo: new DateTimeImmutable('2026-03-03'),
+));
+$mahnung->meta['dunning']['total_minor']; // principal + interest + fee
+
+// Goodwill reminder (Kulanz) — principal only, no interest, no fee:
+$kulanz = GobdInvoice::dun($invoice, new DunningOptions(
+    debtorType: DebtorType::Business,
+    withInterest: false,
+));
 ```
 
 Mutating a finalized document throws — immutability is enforced at the model level:
@@ -139,6 +156,7 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | Schlussrechnung double-VAT gate — advance net + VAT deduction (§14 Abs. 5) | ✅ M3 |
 | Immutability guard + insert-only, hash-chained audit log | ✅ M3 (core) |
 | Storno / cancellation (Storno statt Löschen) | ✅ M3 (core) |
+| Mahnung / §288 Verzugszins (opt-in; €40 fee; dated Basiszinssatz) | ✅ M6 |
 | Document conversion (Angebot/Leistungsnachweis → invoice, source-linked) | ✅ M3 |
 | Retention window (`retention_until`, 8y/10y) | ✅ M1 |
 | Swappable models, config, events, driver managers | ✅ M0/M1 |

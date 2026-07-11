@@ -89,6 +89,35 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Dunning (Mahnung / Verzug) — §288, §286, §247 BGB
+    |--------------------------------------------------------------------------
+    |
+    | Statutory default interest is the Basiszinssatz (§247 BGB, reset by the
+    | Bundesbank every 1 Jan / 1 Jul) plus a §288 surcharge: +5 points if a
+    | consumer is involved (Abs. 1), +9 points B2B (Abs. 2), with a €40 flat fee
+    | for business debtors (Abs. 5). Interest is opt-in per notice — a goodwill
+    | reminder (Kulanz) charges none. Ship ONLY Basiszinssatz values verified
+    | against the Bundesbank publication; extend the table each half-year.
+    | Interest is computed act/act, simple (§289), per-period. See
+    | docs/research/05-document-types-and-lifecycle.md.
+    |
+    */
+    'dunning' => [
+        'base_rate_periods' => [
+            ['from' => '2024-01-01', 'rate' => '3.62'],
+            ['from' => '2024-07-01', 'rate' => '3.37'],
+            ['from' => '2025-01-01', 'rate' => '2.27'],
+            ['from' => '2025-07-01', 'rate' => '1.27'],
+            ['from' => '2026-01-01', 'rate' => '1.27'],
+            ['from' => '2026-07-01', 'rate' => '1.52'], // current, Bundesbank 2026-07-01
+        ],
+        'consumer_surcharge_points' => '5.0',
+        'business_surcharge_points' => '9.0',
+        'late_payment_fee_minor' => 4000,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Document numbering
     |--------------------------------------------------------------------------
     |

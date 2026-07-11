@@ -10,6 +10,9 @@ use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Export\Datev\DatevExportOptions;
 use JohnWink\GobdInvoice\GobdInvoiceManager;
 use JohnWink\GobdInvoice\Models\Document;
+use JohnWink\GobdInvoice\ValueObjects\DunningAssessment;
+use JohnWink\GobdInvoice\ValueObjects\DunningOptions;
+use JohnWink\GobdInvoice\ValueObjects\Money;
 use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
 
 /**
@@ -22,6 +25,8 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
  * @method static ValidationResult validateEInvoice(string $xml)
  * @method static array<string, string> exportGdpdu(iterable<Document> $documents)
  * @method static string exportDatev(iterable<Document> $documents, DatevExportOptions $options)
+ * @method static DunningAssessment assessDunning(Money $principal, DunningOptions $options)
+ * @method static Document dun(Document $document, DunningOptions $options)
  * @method static Document cancel(Document $document, string $reason)
  * @method static Document convert(Document $document, DocumentType $target, array<string, mixed> $overrides = [])
  *

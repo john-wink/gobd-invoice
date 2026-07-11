@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mahnung / Verzug (dunning & §288 default interest):** a `DunningInterestCalculator`
+  (`StatutoryDunningInterestCalculator`) computing §288 BGB default interest on an
+  overdue principal — Basiszinssatz (§247, a dated Bundesbank table shipped in
+  config and verified to 2026-07-01 = 1.52 %) plus the §288 surcharge (consumer
+  +5, business +9 points), the €40 flat fee (§288 Abs. 5, business debtors only),
+  computed act/act, simple (§289, no compounding), split per half-year rate
+  change. **Interest is opt-in:** a goodwill reminder (Kulanz) sets
+  `withInterest: false` and demands only the principal. Exposed as
+  `GobdInvoice::assessDunning($principal, $options)` (a `DunningAssessment` with a
+  per-period breakdown) and `GobdInvoice::dun($invoice, $options)`, which creates a
+  Mahnung — a non-tax business document linked to the invoice, the assessment in
+  its metadata, deliberately kept out of the immutable tax record. Debtor regime
+  and the base-rate table are configurable (`gobd-invoice.dunning.*`).
 - **DATEV export (EXTF Buchungsstapel):** a `DatevExporter` contract and an
   `ExtfExporter` producing the byte-correct DATEV booking batch a tax advisor
   imports (format 700 / layout 13) — Windows-1252, CRLF, semicolon-delimited,
