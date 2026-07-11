@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Anzahlungsrechnung (advance-payment invoice) document type:** a distinct
+  advance-invoice type (§13 Abs. 1 Nr. 1a UStG) alongside the Abschlagsrechnung.
+  It is tax-relevant, deductible in a Schlussrechnung — the §14 Abs. 5 double-VAT
+  gate now covers *all* advance-invoice types via
+  `DocumentType::advanceInvoiceValues()` — and maps to EN 16931 type code 386
+  (prepayment invoice).
 - **M6 GoBD / GDPdU data export (Z3):** a `GobdDataExporter` contract and a
   `GdpduExporter` producing a tax-audit "Datenträgerüberlassung" data set — the
   `rechnungen.csv` and `positionen.csv` tables plus the `index.xml` GDPdU

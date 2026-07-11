@@ -874,7 +874,7 @@ final readonly class GobdInvoiceManager
             $advance = $model::query()->find($id);
 
             throw_unless($advance instanceof Document, GobdInvoiceException::class, "Deducted advance [{$id}] was not found.");
-            throw_unless($advance->type->isAdvanceInvoice(), GobdInvoiceException::class, "Document [{$id}] is not an Abschlagsrechnung and cannot be deducted in a Schlussrechnung.");
+            throw_unless($advance->type->isAdvanceInvoice(), GobdInvoiceException::class, "Document [{$id}] is not an advance invoice (Abschlags-/Anzahlungsrechnung) and cannot be deducted in a Schlussrechnung.");
             throw_if($advance->finalized_at === null, GobdInvoiceException::class, "Deducted advance [{$id}] is not finalized.");
             throw_if($advance->status === DocumentStatus::Cancelled, GobdInvoiceException::class, "Deducted advance [{$id}] is cancelled (its VAT was already reversed by a Storno) and must not be deducted.");
             throw_if($advance->currency !== $currency, GobdInvoiceException::class, "Deducted advance [{$id}] currency [{$advance->currency}] differs from the final invoice currency [{$currency}].");
@@ -931,7 +931,7 @@ final readonly class GobdInvoiceManager
         $hasUndeducted = $model::query()
             ->where('documentable_type', $document->documentable_type)
             ->where('documentable_id', $document->documentable_id)
-            ->where('type', DocumentType::Abschlagsrechnung->value)
+            ->whereIn('type', DocumentType::advanceInvoiceValues())
             ->whereNotNull('finalized_at')
             ->where('status', '!=', DocumentStatus::Cancelled->value)
             ->whereNotIn('id', $deductedIds)

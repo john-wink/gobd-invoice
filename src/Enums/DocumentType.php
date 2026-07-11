@@ -21,6 +21,7 @@ enum DocumentType: string
     case Leistungsnachweis = 'leistungsnachweis';
     case Teilzahlung = 'teilzahlung';
     case Abschlagsrechnung = 'abschlagsrechnung';
+    case Anzahlungsrechnung = 'anzahlungsrechnung';
     case Schlussrechnung = 'schlussrechnung';
     case Storno = 'storno';
     case Gutschrift = 'gutschrift';
@@ -35,6 +36,7 @@ enum DocumentType: string
         return match ($this) {
             self::Rechnung,
             self::Abschlagsrechnung,
+            self::Anzahlungsrechnung,
             self::Schlussrechnung,
             self::Storno,
             self::Gutschrift => true,
@@ -59,13 +61,26 @@ enum DocumentType: string
     /**
      * Whether this is a partial/advance invoice whose already-invoiced net AND
      * VAT a later Schlussrechnung must deduct (§14 Abs. 5 Satz 2 UStG) to avoid
-     * the §14c double-VAT trap. Currently the {@see self::Abschlagsrechnung} is
-     * the only modelled advance type; a distinct Anzahlungs-/Vorauszahlungs-
-     * rechnung (advance-payment, §13 Abs. 1 Nr. 1a) is a planned future case.
+     * the §14c double-VAT trap: the progress invoice ({@see self::Abschlagsrechnung})
+     * and the advance-payment invoice ({@see self::Anzahlungsrechnung}, §13 Abs. 1
+     * Nr. 1a UStG).
      */
     public function isAdvanceInvoice(): bool
     {
-        return $this === self::Abschlagsrechnung;
+        return $this === self::Abschlagsrechnung || $this === self::Anzahlungsrechnung;
+    }
+
+    /**
+     * The string values of the advance-invoice types, for querying siblings.
+     *
+     * @return list<string>
+     */
+    public static function advanceInvoiceValues(): array
+    {
+        return array_values(array_map(
+            static fn (self $type): string => $type->value,
+            array_filter(self::cases(), static fn (self $type): bool => $type->isAdvanceInvoice()),
+        ));
     }
 
     /**
@@ -77,6 +92,7 @@ enum DocumentType: string
         return match ($this) {
             self::Rechnung,
             self::Abschlagsrechnung,
+            self::Anzahlungsrechnung,
             self::Schlussrechnung,
             self::Storno,
             self::Gutschrift => true,
@@ -87,8 +103,9 @@ enum DocumentType: string
     /**
      * The EN 16931 invoice type code (BT-3, code list UNCL1001) for the
      * structured e-invoice: 380 commercial invoice, 381 credit note (a Storno
-     * reverses via a full credit), 389 self-billed invoice (Gutschrift, §14
-     * Abs. 2 UStG). Only defined for types that {@see self::canEmitEInvoice()}.
+     * reverses via a full credit), 386 prepayment invoice (Anzahlungsrechnung),
+     * 389 self-billed invoice (Gutschrift, §14 Abs. 2 UStG). Only defined for
+     * types that {@see self::canEmitEInvoice()}.
      */
     public function en16931TypeCode(): string
     {
@@ -97,6 +114,7 @@ enum DocumentType: string
             self::Abschlagsrechnung,
             self::Schlussrechnung => '380',
             self::Storno => '381',
+            self::Anzahlungsrechnung => '386',
             self::Gutschrift => '389',
             default => throw new LogicException("Document type {$this->value} has no EN 16931 invoice type code."),
         };

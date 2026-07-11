@@ -11,6 +11,7 @@ return [
         'leistungsnachweis' => 'Proof of performance',
         'teilzahlung' => 'Partial payment',
         'abschlagsrechnung' => 'Progress invoice',
+        'anzahlungsrechnung' => 'Down-payment invoice',
         'schlussrechnung' => 'Final invoice',
         'storno' => 'Cancellation invoice',
         'gutschrift' => 'Credit note',

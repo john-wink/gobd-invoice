@@ -11,6 +11,7 @@ return [
         'leistungsnachweis' => 'Leistungsnachweis',
         'teilzahlung' => 'Teilzahlung',
         'abschlagsrechnung' => 'Abschlagsrechnung',
+        'anzahlungsrechnung' => 'Anzahlungsrechnung',
         'schlussrechnung' => 'Schlussrechnung',
         'storno' => 'Stornorechnung',
         'gutschrift' => 'Gutschrift',
