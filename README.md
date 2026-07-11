@@ -13,8 +13,9 @@ manage invoices (Rechnung), quotes (Angebot), cost estimates (Kostenvoranschlag)
 progress/final invoices (Abschlags-/Schlussrechnung), cancellations (Storno),
 credit notes (Gutschrift), proof-of-performance (Leistungsnachweis), partial
 payments (Teilzahlung) and dunning (Mahnung) — with immutable finalization,
-a tamper-evident audit trail, race-safe sequential numbering and (on the
-roadmap) EN 16931 e-invoicing (XRechnung / ZUGFeRD / Factur-X).
+a tamper-evident audit trail, race-safe sequential numbering, EN 16931
+e-invoicing (XRechnung / ZUGFeRD / Factur-X, create + receive + validate),
+§288 default interest, and GDPdU / DATEV export for the tax advisor.
 
 This is a **framework-only** backend package — no Filament, no UI. It is the
 compliance and document engine your application builds a UI on top of.
@@ -77,7 +78,7 @@ $invoice = GobdInvoice::draft(DocumentType::Rechnung, [
 $invoice = GobdInvoice::finalize($invoice);
 
 $invoice->number;        // e.g. "rechnung-2026-00001"
-$invoice->gross_total;   // 26450  (integer minor units = 264.50 EUR)
+$invoice->gross_total;   // 29150  (integer minor units = 291.50 EUR)
 
 // 3. Verify integrity at any time (re-hash the snapshot)
 GobdInvoice::verify($invoice);   // true
@@ -172,6 +173,33 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full 8-month plan to a
 Laracon-ready 1.0.
 
+## Extending
+
+Every behaviour is a contract bound in the container, so a host app can override
+any part without forking. Rebind in a service provider:
+
+```php
+use JohnWink\GobdInvoice\Contracts\DunningInterestCalculator;
+use JohnWink\GobdInvoice\Contracts\DatevAccountResolver;
+
+// e.g. per-customer DATEV debtor accounts, or a bespoke interest policy.
+$this->app->bind(DatevAccountResolver::class, MyChartOfAccounts::class);
+$this->app->bind(DunningInterestCalculator::class, MyDunningCalculator::class);
+```
+
+Key extension points (see `src/Contracts`): `NumberSequenceGenerator` (numbering
+strategy), `TaxRateResolver` (effective-date §12 rates), `KleinunternehmerRule`,
+`DocumentTotalsCalculator`, `EInvoiceSerializer` / `EInvoiceReader` /
+`EInvoiceValidator` / `EInvoicePdfBuilder` (e-invoice pipeline), `GobdDataExporter`
+(GDPdU), `DatevExporter` / `DatevAccountResolver` (DATEV), `DunningInterestCalculator`
+and `AuditLogger`.
+
+The Eloquent models are swappable too — point `config('gobd-invoice.models')` at
+your own subclasses. Finalization emits `DocumentDrafted`, `DocumentFinalized`
+and `DocumentCancelled` events to hook into. Configuration lives in
+`config/gobd-invoice.php` (tax, dunning, numbering, einvoice, pdf, datev,
+retention, audit) — each section is documented inline.
+
 ## Quality gates
 
 ```bash
@@ -183,6 +211,11 @@ composer lint            # Pint --test
 composer test:types      # 100% type coverage
 composer qa              # all of the above
 ```
+
+CI additionally runs **mutation testing** (Pest) over the correctness-critical
+core — integer money math, VAT grouping/rounding, gapless numbering and the
+immutability hash — enforcing a ≥ 90 % mutation score so the tests are proven to
+*detect* defects, not merely cover lines.
 
 ## Documentation & research
 
