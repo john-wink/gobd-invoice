@@ -8,6 +8,14 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Document is now safely subclassable.** The `lines()` and `auditEntries()`
+  relations pin the `document_id` foreign key explicitly (Eloquent otherwise
+  infers `<subclass>_id` from the parent class name), and `source()` links to
+  `static::class` — so a host subclass (e.g. a multi-tenant `Document`) keeps the
+  package's schema. This is required for the advertised swappable-models pattern.
+
 ## [0.1.0] - 2026-07-11
 
 ### Added

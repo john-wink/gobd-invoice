@@ -109,7 +109,9 @@ class Document extends Model implements InvoiceDocument
         /** @var class-string<DocumentLine> $model */
         $model = config('gobd-invoice.models.document_line', DocumentLine::class);
 
-        return $this->hasMany($model)->orderBy('position');
+        // Explicit foreign key so a host subclass (e.g. a tenant-scoped Document)
+        // keeps the `document_id` column instead of an inferred `<subclass>_id`.
+        return $this->hasMany($model, 'document_id')->orderBy('position');
     }
 
     /**
@@ -120,17 +122,18 @@ class Document extends Model implements InvoiceDocument
         /** @var class-string<AuditLogEntry> $model */
         $model = config('gobd-invoice.models.audit_entry', AuditLogEntry::class);
 
-        return $this->hasMany($model);
+        return $this->hasMany($model, 'document_id');
     }
 
     /**
      * The document this one corrects/cancels (Storno → original Rechnung).
      *
-     * @return BelongsTo<self, $this>
+     * @return BelongsTo<static, $this>
      */
     public function source(): BelongsTo
     {
-        return $this->belongsTo(self::class, 'source_document_id');
+        // static::class so a host subclass links to its own (scoped) model.
+        return $this->belongsTo(static::class, 'source_document_id');
     }
 
     /**
