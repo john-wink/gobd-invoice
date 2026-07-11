@@ -33,6 +33,7 @@
         "horstoeko/zugferdublbridge": "^1.0.16",
         "illuminate/contracts": "^13.0",
         "john-wink/en16931-php": "dev-main",
+        "setasign/fpdf": "^1.8.6",
         "spatie/laravel-package-tools": "^1.92"
     },
     "repositories": [

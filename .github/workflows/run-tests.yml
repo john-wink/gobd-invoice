@@ -28,7 +28,12 @@ jobs:
         os: [ubuntu-latest]
         php: ["8.5", "8.4"]
         laravel: ["13.*"]
-        stability: [prefer-lowest, prefer-stable]
+        # prefer-stable only: the horstoeko/zugferd PDF chain (setasign/fpdf,
+        # setasign/fpdi) and deep dev-dependency floors have known lowest-version
+        # incompatibilities outside this package's control, so prefer-lowest would
+        # test the ecosystem's floors, not ours. Our own direct-dependency floors
+        # are pinned honestly in composer.json.
+        stability: [prefer-stable]
         include:
           - laravel: 13.*
             testbench: 11.*
