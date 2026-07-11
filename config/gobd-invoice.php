@@ -152,6 +152,33 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | DATEV export (EXTF Buchungsstapel)
+    |--------------------------------------------------------------------------
+    |
+    | Account numbers are client- and chart-of-accounts-specific, so the package
+    | ships NO defaults — an unmapped group fails the export loud rather than
+    | booking to the wrong account. `debtor_account` is the collective debtor
+    | ("Konto"); `revenue_accounts` maps each VAT group to its revenue account
+    | ("Gegenkonto"), keyed by the canonical "<category>:<rate>" form (e.g.
+    | "S:19", "S:7", "E:0"). A value is either the bare account number (an
+    | automatic-tax account, no BU key) or ['account' => 8400, 'bu' => '9'] to
+    | force a Buchungs-/Steuerschlüssel. The examples below are SKR03 and are
+    | commented out on purpose — verify them against your chart of accounts.
+    | A host needing per-customer debtors binds a custom DatevAccountResolver.
+    |
+    */
+    'datev' => [
+        'debtor_account' => null,
+        'revenue_accounts' => [
+            // 'S:19' => 8400,          // SKR03 Erlöse 19 % USt (Automatikkonto)
+            // 'S:7'  => 8300,          // SKR03 Erlöse 7 % USt (Automatikkonto)
+            // 'E:0'  => 8200,          // SKR03 Erlöse (steuerfrei)
+            // 'AE:0' => 8336,          // SKR03 Erlöse §13b (Reverse Charge)
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Retention (Aufbewahrung) — §147 AO / §257 HGB / §14b UStG
     |--------------------------------------------------------------------------
     |

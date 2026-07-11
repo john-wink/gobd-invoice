@@ -7,6 +7,7 @@ namespace JohnWink\GobdInvoice\Facades;
 use Illuminate\Support\Facades\Facade;
 use JohnWink\En16931\ValidationResult;
 use JohnWink\GobdInvoice\Enums\DocumentType;
+use JohnWink\GobdInvoice\Export\Datev\DatevExportOptions;
 use JohnWink\GobdInvoice\GobdInvoiceManager;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
@@ -20,6 +21,7 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
  * @method static ParsedEInvoice parseEInvoice(string $xml)
  * @method static ValidationResult validateEInvoice(string $xml)
  * @method static array<string, string> exportGdpdu(iterable<Document> $documents)
+ * @method static string exportDatev(iterable<Document> $documents, DatevExportOptions $options)
  * @method static Document cancel(Document $document, string $reason)
  * @method static Document convert(Document $document, DocumentType $target, array<string, mixed> $overrides = [])
  *

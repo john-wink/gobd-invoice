@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **DATEV export (EXTF Buchungsstapel):** a `DatevExporter` contract and an
+  `ExtfExporter` producing the byte-correct DATEV booking batch a tax advisor
+  imports (format 700 / layout 13) — Windows-1252, CRLF, semicolon-delimited,
+  comma decimals, the 31-field EXTF header, the verbatim 125-column heading row
+  and one booking per VAT group (gross to the debtor "Konto" against the mapped
+  revenue "Gegenkonto"; Storno/Gutschrift book "H", everything else "S").
+  Exposed as `GobdInvoice::exportDatev($documents, $options)`. Account numbers
+  are client-specific, so the package hardcodes none: the debtor and per-VAT-group
+  revenue accounts come from `gobd-invoice.datev.*` config (keyed by the canonical
+  "<category>:<rate>" group, e.g. "S:19"), or from a custom `DatevAccountResolver`;
+  an unmapped group fails the export loud. See `DatevExportOptions` for the header
+  metadata (Berater/Mandant/fiscal year/date range/Festschreibung).
 - **Anzahlungsrechnung (advance-payment invoice) document type:** a distinct
   advance-invoice type (§13 Abs. 1 Nr. 1a UStG) alongside the Abschlagsrechnung.
   It is tax-relevant, deductible in a Schlussrechnung — the §14 Abs. 5 double-VAT

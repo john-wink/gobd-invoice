@@ -15,6 +15,7 @@ use JohnWink\En16931\ValidationResult;
 use JohnWink\En16931\Violation;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
+use JohnWink\GobdInvoice\Contracts\DatevExporter;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
@@ -33,6 +34,7 @@ use JohnWink\GobdInvoice\Events\DocumentFinalized;
 use JohnWink\GobdInvoice\Exceptions\DocumentContentException;
 use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
 use JohnWink\GobdInvoice\Exceptions\InvalidStatusTransitionException;
+use JohnWink\GobdInvoice\Export\Datev\DatevExportOptions;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Models\DocumentLine;
 use JohnWink\GobdInvoice\ValueObjects\AdvanceDeduction;
@@ -69,6 +71,7 @@ final readonly class GobdInvoiceManager
         private EInvoiceValidator $eInvoiceValidator,
         private EInvoicePdfBuilder $eInvoicePdfBuilder,
         private GobdDataExporter $gobdDataExporter,
+        private DatevExporter $datevExporter,
     ) {}
 
     /**
@@ -301,6 +304,19 @@ final readonly class GobdInvoiceManager
     public function exportGdpdu(iterable $documents): array
     {
         return $this->gobdDataExporter->export($documents);
+    }
+
+    /**
+     * Export the given (finalized) documents as a DATEV EXTF Buchungsstapel — the
+     * booking batch a German tax advisor imports into DATEV. Returns the
+     * Windows-1252-encoded file content. The host supplies the documents (e.g. a
+     * date-range query) and the export metadata (Berater/Mandant/fiscal year).
+     *
+     * @param  iterable<Document>  $documents
+     */
+    public function exportDatev(iterable $documents, DatevExportOptions $datevExportOptions): string
+    {
+        return $this->datevExporter->export($documents, $datevExportOptions);
     }
 
     /**

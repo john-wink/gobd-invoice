@@ -102,6 +102,17 @@ $report->violations;              // list of fired rules (BR-*, BR-CO-*, BR-DE-*
 
 // 8. Hybrid PDF/A-3: embed the CII XML into your rendered invoice PDF (ZUGFeRD).
 $zugferdPdf = GobdInvoice::eInvoicePdf($invoice, $renderedInvoicePdf);
+
+// 9. DATEV export: a byte-correct EXTF Buchungsstapel for the tax advisor.
+//    Map your chart of accounts in config('gobd-invoice.datev') first.
+use JohnWink\GobdInvoice\Export\Datev\DatevExportOptions;
+
+$extf = GobdInvoice::exportDatev($finalizedDocuments, new DatevExportOptions(
+    berater: 1001,
+    mandant: 456,
+    fiscalYearStart: new DateTimeImmutable('2026-01-01'),
+));
+file_put_contents('EXTF_Buchungsstapel.csv', $extf); // already Windows-1252 / CRLF
 ```
 
 Mutating a finalized document throws — immutability is enforced at the model level:
@@ -137,7 +148,8 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | E-invoicing: native (Java-free) EN 16931 validation (`john-wink/en16931-php`) | ✅ M5 |
 | E-invoicing: full KoSIT-corpus validation parity, PDF/A-3 embed | 🚧 M5 |
 | Z3 GDPdU data export (tax-audit Datenträgerüberlassung) | ✅ M6 |
-| DATEV (EXTF) export, IKS hooks | 🚧 M6 |
+| DATEV (EXTF) Buchungsstapel export (config-mapped accounts) | ✅ M6 |
+| IKS hooks (role/segregation gates) | 🚧 M6 |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full 8-month plan to a
 Laracon-ready 1.0.

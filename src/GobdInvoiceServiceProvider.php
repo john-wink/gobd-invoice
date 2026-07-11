@@ -11,6 +11,8 @@ use JohnWink\En16931\En16931Validator;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
+use JohnWink\GobdInvoice\Contracts\DatevAccountResolver;
+use JohnWink\GobdInvoice\Contracts\DatevExporter;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
 use JohnWink\GobdInvoice\Contracts\DocumentTotalsCalculator;
 use JohnWink\GobdInvoice\Contracts\EInvoicePdfBuilder;
@@ -28,6 +30,8 @@ use JohnWink\GobdInvoice\EInvoice\XRechnungUblSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiReader;
 use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
 use JohnWink\GobdInvoice\EInvoice\ZugferdPdfBuilder;
+use JohnWink\GobdInvoice\Export\Datev\ConfigDatevAccountResolver;
+use JohnWink\GobdInvoice\Export\Datev\ExtfExporter;
 use JohnWink\GobdInvoice\Export\GdpduExporter;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
@@ -134,6 +138,11 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
 
         // GoBD/GDPdU (Z3) data export for tax-audit data access.
         $this->app->bind(GobdDataExporter::class, GdpduExporter::class);
+
+        // DATEV EXTF Buchungsstapel export; account mapping is config-driven by
+        // default, host-overridable via the DatevAccountResolver contract.
+        $this->app->bind(DatevAccountResolver::class, ConfigDatevAccountResolver::class);
+        $this->app->bind(DatevExporter::class, ExtfExporter::class);
 
         // Let host apps swap the document model (the spatie/laravel-permission pattern).
         $this->app->bind(static function (Application $application): InvoiceDocument {
