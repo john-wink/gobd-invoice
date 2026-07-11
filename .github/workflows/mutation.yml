@@ -55,7 +55,23 @@ jobs:
       # Pest's --class is a single-value option that splits on commas
       # (CliConfiguration: explode(',', ...)); repeated --class flags would let
       # the last one win, so the scope must be one comma-separated list.
-      - name: Mutation testing (baseline, report-only)
+      #
+      # The suite kills 194/211 mutants (91.94%). The 17 survivors are all
+      # equivalent mutants — different code, identical observable behaviour, so
+      # no test can distinguish them:
+      #   - Totals array_values() spread of an already-list;
+      #   - resolver '>' vs '>=' on a period start that is never equal;
+      #   - TaxRatePeriod substr() offset/length shifts that the (int) cast and
+      #     checkdate()'s year-leniency normalise away;
+      #   - Money/TaxRate BCMath scale bumps that the (int) cast / rtrim undo,
+      #     and roundToInt's '>= 0' where the '== 0' case rounds to 0 either way;
+      #   - numbering firstOrCreate() default ['current_value' => 0] vs the DB
+      #     column default of 0.
+      # Several sit on lines that ALSO carry killed mutants, so a line-level
+      # @pest-mutate-ignore would discard real coverage. Gate at 90% instead: a
+      # stable floor above the equivalent-mutant band that fails CI if a genuine
+      # test regression drops the score.
+      - name: Mutation testing (min 90% on the critical core)
         run: |
-          vendor/bin/pest --mutate --parallel --covered-only \
+          vendor/bin/pest --mutate --parallel --covered-only --min=90 \
             --class="JohnWink\\GobdInvoice\\ValueObjects\\Money,JohnWink\\GobdInvoice\\Tax,JohnWink\\GobdInvoice\\Numbering,JohnWink\\GobdInvoice\\Audit\\ContentHasher"
