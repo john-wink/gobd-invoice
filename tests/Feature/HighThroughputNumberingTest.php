@@ -10,6 +10,8 @@ use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
 use JohnWink\GobdInvoice\Numbering\LockingSequenceGenerator;
 
+covers(FastSequenceGenerator::class, LockingSequenceGenerator::class);
+
 function useNumberingStrategy(string $strategy): void
 {
     config()->set('gobd-invoice.numbering.strategy', $strategy);
