@@ -8,8 +8,6 @@ use JohnWink\GobdInvoice\Tax\GroupedTotalsCalculator;
 use JohnWink\GobdInvoice\ValueObjects\Money;
 use JohnWink\GobdInvoice\ValueObjects\TaxRate;
 
-covers(GroupedTotalsCalculator::class);
-
 function taxableLine(int $netMinor, string $rate, TaxCategory $category = TaxCategory::Standard): TaxableLine
 {
     return new class($netMinor, $rate, $category) implements TaxableLine

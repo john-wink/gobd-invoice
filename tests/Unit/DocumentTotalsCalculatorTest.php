@@ -13,8 +13,6 @@ use JohnWink\GobdInvoice\ValueObjects\PaymentTerms;
 use JohnWink\GobdInvoice\ValueObjects\TaxRate;
 use JohnWink\GobdInvoice\ValueObjects\TotalsInput;
 
-covers(GroupedDocumentTotalsCalculator::class);
-
 /**
  * @param  array<int, JohnWink\GobdInvoice\Contracts\TaxableLine>  $lines
  * @param  array<int, AllowanceCharge>  $adjustments

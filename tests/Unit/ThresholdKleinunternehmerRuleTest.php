@@ -5,8 +5,6 @@ declare(strict_types=1);
 use JohnWink\GobdInvoice\Tax\ThresholdKleinunternehmerRule;
 use JohnWink\GobdInvoice\ValueObjects\Money;
 
-covers(ThresholdKleinunternehmerRule::class);
-
 function ruleWithReformLimits(): ThresholdKleinunternehmerRule
 {
     return new ThresholdKleinunternehmerRule(

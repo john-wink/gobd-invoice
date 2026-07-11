@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 use JohnWink\GobdInvoice\ValueObjects\Money;
 
-covers(Money::class);
-
 it('builds from a decimal string', function (): void {
     expect(Money::fromDecimal('1234.56')->minorUnits)->toBe(123456)
         ->and(Money::fromDecimal('0.07')->minorUnits)->toBe(7)

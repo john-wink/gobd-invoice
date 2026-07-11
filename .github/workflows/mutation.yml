@@ -52,10 +52,10 @@ jobs:
       # Report-only for now (no --min gate): this run establishes the baseline
       # Mutation Score Indicator. The gate is ratcheted to the achieved floor in
       # a follow-up once the baseline is known.
+      # Pest's --class is a single-value option that splits on commas
+      # (CliConfiguration: explode(',', ...)); repeated --class flags would let
+      # the last one win, so the scope must be one comma-separated list.
       - name: Mutation testing (baseline, report-only)
         run: |
           vendor/bin/pest --mutate --parallel --covered-only \
-            --class="JohnWink\\GobdInvoice\\ValueObjects\\Money" \
-            --class="JohnWink\\GobdInvoice\\Tax" \
-            --class="JohnWink\\GobdInvoice\\Numbering" \
-            --class="JohnWink\\GobdInvoice\\Audit\\ContentHasher"
+            --class="JohnWink\\GobdInvoice\\ValueObjects\\Money,JohnWink\\GobdInvoice\\Tax,JohnWink\\GobdInvoice\\Numbering,JohnWink\\GobdInvoice\\Audit\\ContentHasher"

@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 
-covers(ContentHasher::class);
-
 /**
  * The content hash is the GoBD Unveränderbarkeit anchor: it must be stable
  * regardless of array key order (so re-hashing on read is order-independent)
