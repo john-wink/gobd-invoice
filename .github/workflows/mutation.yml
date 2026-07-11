@@ -1,0 +1,61 @@
+name: mutation
+
+on:
+  push:
+    paths:
+      - "src/ValueObjects/Money.php"
+      - "src/Tax/**.php"
+      - "src/Numbering/**.php"
+      - "src/Audit/ContentHasher.php"
+      - "tests/**.php"
+      - ".github/workflows/mutation.yml"
+      - "composer.json"
+  pull_request:
+    paths:
+      - "src/ValueObjects/Money.php"
+      - "src/Tax/**.php"
+      - "src/Numbering/**.php"
+      - "src/Audit/ContentHasher.php"
+      - "tests/**.php"
+      - ".github/workflows/mutation.yml"
+      - "composer.json"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: mutation - money, tax, numbering, hash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo, simplexml
+          coverage: pcov
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --no-interaction
+
+      # Mutation testing proves the test suite actually *detects* defects in the
+      # correctness-critical code — integer money math, VAT grouping/rounding,
+      # gapless numbering and the immutability hash — rather than merely covering
+      # the lines. Scoped to those namespaces; the wider e-invoice/serialization
+      # surface is proven by KoSIT parity and feature tests instead.
+      #
+      # Report-only for now (no --min gate): this run establishes the baseline
+      # Mutation Score Indicator. The gate is ratcheted to the achieved floor in
+      # a follow-up once the baseline is known.
+      - name: Mutation testing (baseline, report-only)
+        run: |
+          vendor/bin/pest --mutate --parallel --covered-only \
+            --class="JohnWink\\GobdInvoice\\ValueObjects\\Money" \
+            --class="JohnWink\\GobdInvoice\\Tax" \
+            --class="JohnWink\\GobdInvoice\\Numbering" \
+            --class="JohnWink\\GobdInvoice\\Audit\\ContentHasher"
