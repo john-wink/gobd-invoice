@@ -167,6 +167,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a gross amount. Not yet wired into finalization/persistence (next slice).
 - Project scaffold, tooling (PHPStan max, Rector, Pint, Pest, Prettier), CI matrix
   and community health files.
+- **Release hardening:** a mutation-testing gate over the correctness-critical
+  core (integer money math, VAT grouping/rounding, gapless numbering and the
+  immutability hash) enforcing a ≥90% mutation score (currently 91.94%; the
+  remainder are documented equivalent mutants). Pinned `setasign/fpdf` to
+  `^1.8.6` — the floor the hybrid-PDF feature actually needs (horstoeko's `fpdi`
+  chain), which `^1` alone would not guarantee. CI runs prefer-stable on PHP 8.4
+  and 8.5.
 - `docs/research/` — verified reference notes on GoBD, UStG invoice content,
   mandatory B2B e-invoicing (XRechnung / ZUGFeRD), retention & tax-audit data
   access, the German document taxonomy, money/VAT/rounding rules, a
