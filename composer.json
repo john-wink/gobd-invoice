@@ -29,8 +29,8 @@
     "require": {
         "php": "^8.4",
         "ext-bcmath": "*",
-        "horstoeko/zugferd": "^1.0",
-        "horstoeko/zugferdublbridge": "^1.0",
+        "horstoeko/zugferd": "^1.0.123",
+        "horstoeko/zugferdublbridge": "^1.0.16",
         "illuminate/contracts": "^13.0",
         "john-wink/en16931-php": "dev-main",
         "spatie/laravel-package-tools": "^1.92"
