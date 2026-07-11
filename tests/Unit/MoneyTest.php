@@ -86,3 +86,50 @@ it('rejects non-numeric multipliers, percentages and rates instead of silently y
         ->and(fn (): Money => Money::fromMinorUnits(10000)->netFromGross('abc'))->toThrow(InvalidArgumentException::class)
         ->and(fn (): Money => Money::fromMinorUnits(10000)->netFromGross('19.0', ''))->toThrow(InvalidArgumentException::class);
 });
+
+it('rejects a currency code that is not exactly three upper-case letters', function (string $currency): void {
+    // Both halves of the guard matter: a wrong length AND a lower-case (but
+    // 3-char) code such as "eur" must be rejected.
+    expect(fn (): Money => Money::fromMinorUnits(100, $currency))->toThrow(InvalidArgumentException::class);
+})->with(['eur', 'Eur', 'EU', 'EURO', '']);
+
+it('accepts a valid three-letter upper-case currency', function (): void {
+    expect(Money::fromMinorUnits(100, 'USD')->currency)->toBe('USD');
+});
+
+it('enforces the same currency when subtracting', function (): void {
+    expect(fn (): Money => Money::fromMinorUnits(100, 'EUR')->minus(Money::fromMinorUnits(50, 'USD')))
+        ->toThrow(InvalidArgumentException::class);
+});
+
+it('multiplies by an integer factor as well as a decimal string', function (): void {
+    expect(Money::fromMinorUnits(1200)->multipliedBy(2)->minorUnits)->toBe(2400);
+});
+
+it('classifies sign strictly at the zero boundary', function (): void {
+    expect(Money::zero()->isZero())->toBeTrue()
+        ->and(Money::zero()->isNegative())->toBeFalse()
+        ->and(Money::zero()->isPositive())->toBeFalse()
+        ->and(Money::fromMinorUnits(1)->isPositive())->toBeTrue()
+        ->and(Money::fromMinorUnits(1)->isNegative())->toBeFalse()
+        ->and(Money::fromMinorUnits(1)->isZero())->toBeFalse()
+        ->and(Money::fromMinorUnits(-1)->isNegative())->toBeTrue()
+        ->and(Money::fromMinorUnits(-1)->isPositive())->toBeFalse()
+        ->and(Money::fromMinorUnits(-1)->isZero())->toBeFalse();
+});
+
+it('treats amounts of different currencies as unequal even at the same magnitude', function (): void {
+    expect(Money::fromMinorUnits(100, 'EUR')->equals(Money::fromMinorUnits(100, 'USD')))->toBeFalse()
+        ->and(Money::fromMinorUnits(100, 'EUR')->equals(Money::fromMinorUnits(100, 'EUR')))->toBeTrue();
+});
+
+it('refuses to compare amounts across currencies', function (): void {
+    expect(fn (): int => Money::fromMinorUnits(100, 'EUR')->compareTo(Money::fromMinorUnits(100, 'USD')))
+        ->toThrow(InvalidArgumentException::class)
+        ->and(Money::fromMinorUnits(100)->compareTo(Money::fromMinorUnits(50)))->toBe(1);
+});
+
+it('formats zero without a sign and a single negative cent with one', function (): void {
+    expect(Money::zero()->toDecimal())->toBe('0.00')
+        ->and(Money::fromMinorUnits(-1)->toDecimal())->toBe('-0.01');
+});

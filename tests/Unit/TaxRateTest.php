@@ -32,3 +32,21 @@ it('computes VAT identically regardless of how the equivalent rate is written', 
     expect((new TaxRate('19', TaxCategory::Standard))->vatOf($base)->minorUnits)
         ->toBe((new TaxRate('19.00', TaxCategory::Standard))->vatOf($base)->minorUnits);
 });
+
+it('builds the group key as "<category>:<canonical-rate>" with trailing zeros stripped', function (): void {
+    // Pins the exact wire form, not just equivalence: the category and the
+    // canonicalised rate, joined by a colon, with no trailing "." or zeros.
+    expect((new TaxRate('19.00', TaxCategory::Standard))->groupKey())->toBe('S:19')
+        ->and((new TaxRate('7.0', TaxCategory::Standard))->groupKey())->toBe('S:7')
+        ->and((new TaxRate('16.5', TaxCategory::Standard))->groupKey())->toBe('S:16.5')
+        ->and((new TaxRate('0.0', TaxCategory::Exempt))->groupKey())->toBe('E:0');
+});
+
+it('charges no VAT for an untaxed category even when a non-zero rate is attached', function (): void {
+    // The factories pair untaxed categories with "0.0", so the early return is
+    // only observable when a non-zero rate is forced onto an untaxed category:
+    // without it, the percentage would be applied.
+    $reverseCharge = new TaxRate('19.0', TaxCategory::ReverseCharge);
+
+    expect($reverseCharge->vatOf(Money::fromMinorUnits(10000))->isZero())->toBeTrue();
+});

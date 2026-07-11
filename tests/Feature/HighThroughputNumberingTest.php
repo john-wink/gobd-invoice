@@ -58,6 +58,24 @@ it('FastSequenceGenerator increments atomically per (type, series, year)', funct
         ->and($other->sequence)->toBe(1);
 });
 
+it('keeps an independent counter per document_type, series AND year', function (string $generatorClass): void {
+    /** @var NumberSequenceGenerator $generator */
+    $generator = new $generatorClass;
+
+    // Baseline counter for (Rechnung, "A", 2024).
+    expect($generator->next(DocumentType::Rechnung, 'A', 2024)->sequence)->toBe(1)
+        ->and($generator->next(DocumentType::Rechnung, 'A', 2024)->sequence)->toBe(2)
+        // Vary exactly ONE key at a time — each must start its own counter at 1.
+        // If any key were dropped from the counter lookup, one of these would
+        // collide with the baseline and continue at 3 instead.
+        ->and($generator->next(DocumentType::Rechnung, 'A', 2025)->sequence)->toBe(1)  // year
+        ->and($generator->next(DocumentType::Rechnung, 'B', 2024)->sequence)->toBe(1)  // series
+        ->and($generator->next(DocumentType::Angebot, 'A', 2024)->sequence)->toBe(1);  // type
+})->with([
+    'fast' => [FastSequenceGenerator::class],
+    'gapless' => [LockingSequenceGenerator::class],
+]);
+
 it('tolerates gaps under the fast strategy: a failed finalize burns the number', function (): void {
     useNumberingStrategy('fast');
     expect(finalizedFast()->sequence)->toBe(1);
