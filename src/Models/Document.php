@@ -29,6 +29,7 @@ use Override;
  * @property int $id
  * @property DocumentType $type
  * @property DocumentStatus $status
+ * @property string|null $created_by
  * @property string|null $series
  * @property string|null $number
  * @property int|null $year

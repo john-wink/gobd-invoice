@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace JohnWink\GobdInvoice\Audit;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Auth;
+use JohnWink\GobdInvoice\Contracts\ActorResolver;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Models\AuditLogEntry;
@@ -19,6 +19,7 @@ final readonly class AppendOnlyAuditLogger implements AuditLogger
 {
     public function __construct(
         private ContentHasher $contentHasher,
+        private ActorResolver $actorResolver,
     ) {}
 
     public function append(InvoiceDocument $invoiceDocument, string $event, array $context = []): Model
@@ -40,7 +41,7 @@ final readonly class AppendOnlyAuditLogger implements AuditLogger
         return $model::create([
             'document_id' => $documentId,
             'event' => $event,
-            'actor' => $this->resolveActor(),
+            'actor' => $this->actorResolver->resolve(),
             'context' => $context,
             'content_hash' => $contentHash,
             'previous_hash' => $previousHash,
@@ -89,12 +90,5 @@ final readonly class AppendOnlyAuditLogger implements AuditLogger
             'context' => $context,
             'previous_hash' => $previousHash,
         ]);
-    }
-
-    private function resolveActor(): ?string
-    {
-        $id = Auth::id();
-
-        return $id === null ? null : (string) $id;
     }
 }

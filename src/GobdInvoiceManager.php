@@ -14,6 +14,7 @@ use InvalidArgumentException;
 use JohnWink\En16931\ValidationResult;
 use JohnWink\En16931\Violation;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
+use JohnWink\GobdInvoice\Contracts\ActorResolver;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DatevExporter;
 use JohnWink\GobdInvoice\Contracts\DocumentContentValidator;
@@ -25,6 +26,7 @@ use JohnWink\GobdInvoice\Contracts\EInvoiceSerializer;
 use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
 use JohnWink\GobdInvoice\Contracts\GobdDataExporter;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
+use JohnWink\GobdInvoice\Contracts\SegregationPolicy;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Enums\PriceMode;
@@ -77,6 +79,8 @@ final readonly class GobdInvoiceManager
         private GobdDataExporter $gobdDataExporter,
         private DatevExporter $datevExporter,
         private DunningInterestCalculator $dunningInterestCalculator,
+        private ActorResolver $actorResolver,
+        private SegregationPolicy $segregationPolicy,
     ) {}
 
     /**
@@ -153,6 +157,9 @@ final readonly class GobdInvoiceManager
             $document->meta = $meta;
         }
 
+        // IKS accountability: record who created the draft (for the four-eyes gate).
+        $document->created_by = $this->actorResolver->resolve();
+
         $document->save();
 
         foreach (array_values($lines) as $index => $line) {
@@ -172,6 +179,18 @@ final readonly class GobdInvoiceManager
      * and write the audit entry. After this the tax-relevant content is immutable.
      */
     public function finalize(Document $document): Document
+    {
+        // IKS segregation of duties (preventive control): may this actor finalize?
+        // Gates the primary Festschreibung only; the Storno that cancel()
+        // festschreibt internally is already gated by assertCanCancel(), so it
+        // uses the ungated performFinalize() (else the canceller, who both drafts
+        // and finalizes the Storno, would trip the four-eyes rule on themselves).
+        $this->segregationPolicy->assertCanFinalize($document, $this->actorResolver->resolve());
+
+        return $this->performFinalize($document);
+    }
+
+    private function performFinalize(Document $document): Document
     {
         if ($document->documentStatus() !== DocumentStatus::Draft) {
             throw InvalidStatusTransitionException::between($document->status, DocumentStatus::Finalized);
@@ -407,6 +426,9 @@ final readonly class GobdInvoiceManager
             throw new GobdInvoiceException("Document [{$document->number}] is already cancelled.");
         }
 
+        // IKS segregation of duties (preventive control): may this actor cancel?
+        $this->segregationPolicy->assertCanCancel($document, $this->actorResolver->resolve());
+
         $document->loadMissing('lines');
 
         $stornoLines = $document->lines->map(static fn (DocumentLine $documentLine): array => [
@@ -449,7 +471,7 @@ final readonly class GobdInvoiceManager
 
             $storno->source_document_id = $document->id;
             $storno->save();
-            $this->finalize($storno);
+            $this->performFinalize($storno);
 
             $document->status = DocumentStatus::Cancelled;
             $document->save();

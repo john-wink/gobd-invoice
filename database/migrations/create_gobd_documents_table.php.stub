@@ -14,6 +14,9 @@ return new class extends Migration
             $table->id();
             $table->string('type')->index();
             $table->string('status')->index();
+            // IKS accountability: the actor (ActorResolver) that created the draft,
+            // used by the four-eyes segregation policy (drafter != finalizer).
+            $table->string('created_by')->nullable();
             $table->string('series')->nullable();
             $table->string('number')->nullable()->unique();
             $table->unsignedSmallInteger('year')->nullable();

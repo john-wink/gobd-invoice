@@ -10,6 +10,7 @@ use InvalidArgumentException;
 use JohnWink\En16931\En16931Validator;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
+use JohnWink\GobdInvoice\Contracts\ActorResolver;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\DatevAccountResolver;
 use JohnWink\GobdInvoice\Contracts\DatevExporter;
@@ -24,6 +25,7 @@ use JohnWink\GobdInvoice\Contracts\GobdDataExporter;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Contracts\KleinunternehmerRule;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
+use JohnWink\GobdInvoice\Contracts\SegregationPolicy;
 use JohnWink\GobdInvoice\Contracts\TaxRateResolver;
 use JohnWink\GobdInvoice\Contracts\TotalsCalculator;
 use JohnWink\GobdInvoice\Dunning\StatutoryDunningInterestCalculator;
@@ -35,6 +37,9 @@ use JohnWink\GobdInvoice\EInvoice\ZugferdPdfBuilder;
 use JohnWink\GobdInvoice\Export\Datev\ConfigDatevAccountResolver;
 use JohnWink\GobdInvoice\Export\Datev\ExtfExporter;
 use JohnWink\GobdInvoice\Export\GdpduExporter;
+use JohnWink\GobdInvoice\Iks\AuthActorResolver;
+use JohnWink\GobdInvoice\Iks\FourEyesSegregationPolicy;
+use JohnWink\GobdInvoice\Iks\PermissiveSegregationPolicy;
 use JohnWink\GobdInvoice\Models\Document;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
 use JohnWink\GobdInvoice\Numbering\LockingSequenceGenerator;
@@ -102,6 +107,12 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
         ));
         $this->app->bind(AuditLogger::class, AppendOnlyAuditLogger::class);
         $this->app->bind(DocumentContentValidator::class, MandatoryContentValidator::class);
+
+        // IKS: who acted (accountability) + the preventive segregation gate.
+        $this->app->bind(ActorResolver::class, AuthActorResolver::class);
+        $this->app->bind(SegregationPolicy::class, static fn (): SegregationPolicy => Config::string('gobd-invoice.iks.segregation', 'permissive') === 'four_eyes'
+            ? new FourEyesSegregationPolicy
+            : new PermissiveSegregationPolicy);
 
         // E-invoice serialization. ZUGFeRD/Factur-X and XRechnung-CII are all
         // produced by the CII serializer; 'xrechnung-ubl' converts XRechnung-CII

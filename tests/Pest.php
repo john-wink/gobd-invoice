@@ -63,12 +63,12 @@ function failAuditOn(string $event): void
                 throw new RuntimeException("audit boom on [{$event}]");
             }
 
-            return (new AppendOnlyAuditLogger(app(ContentHasher::class)))->append($invoiceDocument, $event, $context);
+            return (new AppendOnlyAuditLogger(app(ContentHasher::class), app(JohnWink\GobdInvoice\Contracts\ActorResolver::class)))->append($invoiceDocument, $event, $context);
         }
 
         public function verify(InvoiceDocument $invoiceDocument): bool
         {
-            return (new AppendOnlyAuditLogger(app(ContentHasher::class)))->verify($invoiceDocument);
+            return (new AppendOnlyAuditLogger(app(ContentHasher::class), app(JohnWink\GobdInvoice\Contracts\ActorResolver::class)))->verify($invoiceDocument);
         }
     });
 }

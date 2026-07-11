@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **IKS internal-control hooks (segregation of duties):** every lifecycle action
+  now resolves an actor via a pluggable `ActorResolver` (default: the
+  authenticated user) and records it on the audit trail and as a document's
+  `created_by`. A `SegregationPolicy` gate is consulted BEFORE finalize and
+  cancel (a preventive control, distinct from the after-the-fact log): the
+  default `PermissiveSegregationPolicy` is unrestricted, and an opt-in
+  `FourEyesSegregationPolicy` (via `gobd-invoice.iks.segregation`) enforces that a
+  document's creator may not also finalize or cancel it (Vier-Augen-Prinzip). The
+  Storno that `cancel()` writes internally is exempt from the finalize gate (the
+  cancellation itself is already gated). Hosts bind their own policy for
+  role-based rules.
 - **Mahnung / Verzug (dunning & §288 default interest):** a `DunningInterestCalculator`
   (`StatutoryDunningInterestCalculator`) computing §288 BGB default interest on an
   overdue principal — Basiszinssatz (§247, a dated Bundesbank table shipped in

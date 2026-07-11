@@ -168,7 +168,7 @@ $invoice->save(); // throws DocumentIsImmutableException (GoBD Unveränderbarkei
 | E-invoicing: full KoSIT-corpus validation parity, PDF/A-3 embed | 🚧 M5 |
 | Z3 GDPdU data export (tax-audit Datenträgerüberlassung) | ✅ M6 |
 | DATEV (EXTF) Buchungsstapel export (config-mapped accounts) | ✅ M6 |
-| IKS hooks (role/segregation gates) | 🚧 M6 |
+| IKS hooks: actor accountability + four-eyes segregation-of-duties gate | ✅ M6 |
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full 8-month plan to a
 Laracon-ready 1.0.
@@ -191,14 +191,15 @@ Key extension points (see `src/Contracts`): `NumberSequenceGenerator` (numbering
 strategy), `TaxRateResolver` (effective-date §12 rates), `KleinunternehmerRule`,
 `DocumentTotalsCalculator`, `EInvoiceSerializer` / `EInvoiceReader` /
 `EInvoiceValidator` / `EInvoicePdfBuilder` (e-invoice pipeline), `GobdDataExporter`
-(GDPdU), `DatevExporter` / `DatevAccountResolver` (DATEV), `DunningInterestCalculator`
-and `AuditLogger`.
+(GDPdU), `DatevExporter` / `DatevAccountResolver` (DATEV), `DunningInterestCalculator`,
+`AuditLogger`, `ActorResolver` (who is acting) and `SegregationPolicy` (the IKS
+gate — a `FourEyesSegregationPolicy` ships, opt-in via `gobd-invoice.iks.segregation`).
 
 The Eloquent models are swappable too — point `config('gobd-invoice.models')` at
 your own subclasses. Finalization emits `DocumentDrafted`, `DocumentFinalized`
 and `DocumentCancelled` events to hook into. Configuration lives in
 `config/gobd-invoice.php` (tax, dunning, numbering, einvoice, pdf, datev,
-retention, audit) — each section is documented inline.
+retention, audit, iks) — each section is documented inline.
 
 ## Quality gates
 

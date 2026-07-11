@@ -246,6 +246,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Internal control system (IKS)
+    |--------------------------------------------------------------------------
+    |
+    | A GoBD internal-control hook. Every lifecycle action already records its
+    | actor (ActorResolver, default: the authenticated user) in the audit trail.
+    | 'segregation' selects the preventive gate consulted before finalize/cancel:
+    |   'permissive' (default) — no restriction.
+    |   'four_eyes'            — the creator of a document may not also finalize
+    |                            or cancel it (Vier-Augen-Prinzip). Requires
+    |                            identifiable actors; an anonymous action is not
+    |                            blocked. Bind a custom SegregationPolicy for
+    |                            role-based rules.
+    |
+    */
+    'iks' => [
+        'segregation' => 'permissive', // permissive | four_eyes
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Content validation (§14 UStG Pflichtangaben)
     |--------------------------------------------------------------------------
     |
