@@ -186,39 +186,43 @@ final readonly class GobdInvoiceManager
     {
         throw_unless($document->documentStatus() === DocumentStatus::Draft, GobdInvoiceException::class, "Only a draft can be edited; [{$document->number}] is not a draft.");
 
-        $currency = $this->toStringValue($attributes['currency'] ?? null, (string) $document->currency);
-        $document->currency = $currency;
+        // Atomic: the line items are deleted and recreated, so a failure mid-way
+        // (e.g. an invalid amount) must not leave the draft with its lines gone.
+        DB::transaction(function () use ($document, $attributes, $lines): void {
+            $currency = $this->toStringValue($attributes['currency'] ?? null, (string) $document->currency);
+            $document->currency = $currency;
 
-        if (array_key_exists('issue_date', $attributes)) {
-            $document->issue_date = $this->parseDate($attributes['issue_date']);
-        }
-        if (array_key_exists('service_date', $attributes)) {
-            $document->service_date = $this->parseDate($attributes['service_date']);
-        }
-        if (array_key_exists('seller', $attributes)) {
-            $document->seller = $this->normalizeParty($attributes['seller']);
-        }
-        if (array_key_exists('buyer', $attributes)) {
-            $document->buyer = $this->normalizeParty($attributes['buyer']);
-        }
-        if (isset($attributes['meta']) && is_array($attributes['meta'])) {
-            /** @var array<string, mixed> $meta */
-            $meta = $attributes['meta'];
-            $document->meta = $meta;
-        }
-        if (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
-            $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
-            $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
-        }
+            if (array_key_exists('issue_date', $attributes)) {
+                $document->issue_date = $this->parseDate($attributes['issue_date']);
+            }
+            if (array_key_exists('service_date', $attributes)) {
+                $document->service_date = $this->parseDate($attributes['service_date']);
+            }
+            if (array_key_exists('seller', $attributes)) {
+                $document->seller = $this->normalizeParty($attributes['seller']);
+            }
+            if (array_key_exists('buyer', $attributes)) {
+                $document->buyer = $this->normalizeParty($attributes['buyer']);
+            }
+            if (isset($attributes['meta']) && is_array($attributes['meta'])) {
+                /** @var array<string, mixed> $meta */
+                $meta = $attributes['meta'];
+                $document->meta = $meta;
+            }
+            if (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
+                $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
+                $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
+            }
 
-        $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
-        $document->save();
+            $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
+            $document->save();
 
-        // Replace the line items (a draft carries no legal identity yet).
-        $document->lines()->delete();
-        foreach (array_values($lines) as $index => $line) {
-            $document->lines()->create($this->buildLineAttributes($index + 1, $line, $currency));
-        }
+            // Replace the line items (a draft carries no legal identity yet).
+            $document->lines()->delete();
+            foreach (array_values($lines) as $index => $line) {
+                $document->lines()->create($this->buildLineAttributes($index + 1, $line, $currency));
+            }
+        });
 
         $document->load('lines');
 
