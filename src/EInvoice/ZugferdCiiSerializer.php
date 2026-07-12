@@ -117,8 +117,13 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
             $document->currency,
         );
 
+        // §14 time of supply → EN 16931: a single Leistungszeitpunkt maps to the
+        // actual delivery date (BT-72); a Leistungszeitraum maps to the invoicing
+        // period (BT-73/74).
         if ($document->service_date !== null) {
             $zugferdDocumentBuilder->setDocumentSupplyChainEvent($document->service_date);
+        } elseif ($document->service_period_start !== null && $document->service_period_end !== null) {
+            $zugferdDocumentBuilder->setDocumentBillingPeriod($document->service_period_start, $document->service_period_end, null);
         }
 
         $buyerReference = $this->stringMeta($document, 'buyer_reference');

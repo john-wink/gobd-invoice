@@ -56,6 +56,8 @@ use Override;
  * @property array<string, mixed>|null $buyer
  * @property Carbon|null $issue_date
  * @property Carbon|null $service_date
+ * @property Carbon|null $service_period_start
+ * @property Carbon|null $service_period_end
  * @property Carbon|null $finalized_at
  * @property string|null $content_hash
  * @property array<string, mixed>|null $finalized_payload
@@ -197,7 +199,7 @@ class Document extends Model implements InvoiceDocument
         'advances_net_total', 'advances_vat_total',
         'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
         'advance_deductions', 'seller', 'buyer',
-        'issue_date', 'service_date', 'finalized_at', 'content_hash', 'finalized_payload',
+        'issue_date', 'service_date', 'service_period_start', 'service_period_end', 'finalized_at', 'content_hash', 'finalized_payload',
     ];
 
     /**
@@ -232,6 +234,8 @@ class Document extends Model implements InvoiceDocument
             'buyer' => 'array',
             'issue_date' => 'date',
             'service_date' => 'date',
+            'service_period_start' => 'date',
+            'service_period_end' => 'date',
             'finalized_at' => 'datetime',
             'finalized_payload' => 'array',
             'retention_until' => 'date',

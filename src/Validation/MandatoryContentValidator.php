@@ -79,8 +79,10 @@ final class MandatoryContentValidator implements DocumentContentValidator
             }
         }
 
-        // Nr. 6 — time of supply (Leistungszeitpunkt); may equal the issue date.
-        if ($document->service_date === null) {
+        // Nr. 6 — time of supply: a Leistungszeitpunkt (single date, may equal the
+        // issue date) OR a Leistungszeitraum (period start+end) satisfies it.
+        $hasPeriod = $document->service_period_start !== null && $document->service_period_end !== null;
+        if ($document->service_date === null && ! $hasPeriod) {
             $violations[] = 'service_date';
         }
 

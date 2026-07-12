@@ -111,6 +111,8 @@ final readonly class GobdInvoiceManager
         $document->series = $this->toStringValue($attributes['series'] ?? null, $documentType->defaultSeries());
         $document->issue_date = $this->parseDate($attributes['issue_date'] ?? null);
         $document->service_date = $this->parseDate($attributes['service_date'] ?? null);
+        $document->service_period_start = $this->parseDate($attributes['service_period_start'] ?? null);
+        $document->service_period_end = $this->parseDate($attributes['service_period_end'] ?? null);
         $document->is_financial_sector = isset($attributes['is_financial_sector'])
             ? (bool) $attributes['is_financial_sector']
             : Config::boolean('gobd-invoice.retention.financial_sector', false);
@@ -197,6 +199,12 @@ final readonly class GobdInvoiceManager
             }
             if (array_key_exists('service_date', $attributes)) {
                 $document->service_date = $this->parseDate($attributes['service_date']);
+            }
+            if (array_key_exists('service_period_start', $attributes)) {
+                $document->service_period_start = $this->parseDate($attributes['service_period_start']);
+            }
+            if (array_key_exists('service_period_end', $attributes)) {
+                $document->service_period_end = $this->parseDate($attributes['service_period_end']);
             }
             if (array_key_exists('seller', $attributes)) {
                 $document->seller = $this->normalizeParty($attributes['seller']);
@@ -519,6 +527,8 @@ final readonly class GobdInvoiceManager
                 'currency' => $document->currency,
                 'series' => DocumentType::Storno->defaultSeries(),
                 'service_date' => $document->service_date,
+                'service_period_start' => $document->service_period_start,
+                'service_period_end' => $document->service_period_end,
                 'is_financial_sector' => $document->is_financial_sector,
                 'adjustments' => $stornoAdjustments,
                 'accounting_rate' => $document->accounting_rate,
@@ -578,6 +588,8 @@ final readonly class GobdInvoiceManager
 
         $attributes = array_merge([
             'service_date' => $document->service_date,
+            'service_period_start' => $document->service_period_start,
+            'service_period_end' => $document->service_period_end,
             'seller' => $document->seller,
             'buyer' => $document->buyer,
             'adjustments' => $document->document_adjustments,
@@ -926,6 +938,8 @@ final readonly class GobdInvoiceManager
             'currency' => $document->currency,
             'issue_date' => $document->issue_date?->toDateString(),
             'service_date' => $document->service_date?->toDateString(),
+            'service_period_start' => $document->service_period_start?->toDateString(),
+            'service_period_end' => $document->service_period_end?->toDateString(),
             'source_document_id' => $document->source_document_id,
             'line_net_total' => $document->line_net_total,
             'allowance_total' => $document->allowance_total,

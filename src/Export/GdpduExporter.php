@@ -60,7 +60,7 @@ final class GdpduExporter implements GobdDataExporter
                 (string) $document->number,
                 $document->type->value,
                 $this->date($document->issue_date),
-                $this->date($document->service_date),
+                $this->date($document->service_date ?? $document->service_period_end),
                 (string) $document->currency,
                 $seller->name,
                 (string) $seller->vatId,
