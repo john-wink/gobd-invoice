@@ -17,6 +17,7 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
 
 /**
  * @method static Document draft(DocumentType $type, array<string, mixed> $attributes = [], array<int, array<string, mixed>> $lines = [])
+ * @method static Document updateDraft(Document $document, array<string, mixed> $attributes = [], array<int, array<string, mixed>> $lines = [])
  * @method static Document finalize(Document $document)
  * @method static bool verify(Document $document)
  * @method static string eInvoiceXml(Document $document)

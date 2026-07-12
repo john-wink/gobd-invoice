@@ -174,6 +174,60 @@ final readonly class GobdInvoiceManager
     }
 
     /**
+     * Update an editable draft in place: re-apply the given draft attributes and
+     * REPLACE its line items. Only a draft may be edited — a finalized document
+     * is immutable (Unveränderbarkeit), so this throws for anything else. Line
+     * and document `$attributes`/`$lines` follow the same shape as {@see draft()}.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @param  array<int, array<string, mixed>>  $lines
+     */
+    public function updateDraft(Document $document, array $attributes = [], array $lines = []): Document
+    {
+        throw_unless($document->documentStatus() === DocumentStatus::Draft, GobdInvoiceException::class, "Only a draft can be edited; [{$document->number}] is not a draft.");
+
+        $currency = $this->toStringValue($attributes['currency'] ?? null, (string) $document->currency);
+        $document->currency = $currency;
+
+        if (array_key_exists('issue_date', $attributes)) {
+            $document->issue_date = $this->parseDate($attributes['issue_date']);
+        }
+        if (array_key_exists('service_date', $attributes)) {
+            $document->service_date = $this->parseDate($attributes['service_date']);
+        }
+        if (array_key_exists('seller', $attributes)) {
+            $document->seller = $this->normalizeParty($attributes['seller']);
+        }
+        if (array_key_exists('buyer', $attributes)) {
+            $document->buyer = $this->normalizeParty($attributes['buyer']);
+        }
+        if (isset($attributes['meta']) && is_array($attributes['meta'])) {
+            /** @var array<string, mixed> $meta */
+            $meta = $attributes['meta'];
+            $document->meta = $meta;
+        }
+        if (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
+            $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
+            $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
+        }
+
+        $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
+        $document->save();
+
+        // Replace the line items (a draft carries no legal identity yet).
+        $document->lines()->delete();
+        foreach (array_values($lines) as $index => $line) {
+            $document->lines()->create($this->buildLineAttributes($index + 1, $line, $currency));
+        }
+
+        $document->load('lines');
+
+        event(new DocumentDrafted($document));
+
+        return $document;
+    }
+
+    /**
      * Finalize (festschreiben) a draft: compute the full EN 16931 totals chain,
      * assign the number, snapshot + hash the content, set the retention window
      * and write the audit entry. After this the tax-relevant content is immutable.

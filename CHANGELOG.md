@@ -8,6 +8,13 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **`GobdInvoice::updateDraft($document, $attributes, $lines)`** — edit an
+  unfinalized draft in place: re-applies the draft attributes and replaces its
+  line items. Throws for a finalized document (Unveränderbarkeit). Lets a host
+  UI offer an edit mode for drafts before Festschreibung.
+
 ### Fixed
 
 - **Document is now safely subclassable.** The `lines()` and `auditEntries()`
