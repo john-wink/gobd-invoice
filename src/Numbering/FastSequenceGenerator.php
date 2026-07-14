@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Numbering;
 
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Enums\DocumentType;
@@ -28,18 +27,15 @@ use JohnWink\GobdInvoice\ValueObjects\DocumentNumber;
  */
 final class FastSequenceGenerator implements NumberSequenceGenerator
 {
+    use ResolvesSequenceKeyAndFormat;
+
     public function next(DocumentType $documentType, string $series, int $year): DocumentNumber
     {
         /** @var class-string<NumberSequence> $model */
         $model = config('gobd-invoice.models.sequence', NumberSequence::class);
 
-        $format = Config::string('gobd-invoice.numbering.format', '{type}-{year}-{seq:5}');
-
-        $keys = [
-            'document_type' => $documentType->value,
-            'series' => $series,
-            'year' => $year,
-        ];
+        $keys = $this->sequenceKeys($documentType, $series, $year);
+        $format = $this->formatFor($documentType, $series, $year);
 
         // Ensure the counter row exists before incrementing it.
         $model::query()->firstOrCreate($keys, ['current_value' => 0]);

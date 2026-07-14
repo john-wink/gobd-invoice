@@ -30,7 +30,12 @@ final readonly class Money implements Stringable
         public int $minorUnits,
         public string $currency = 'EUR',
     ) {
-        throw_if(strlen($currency) !== 3 || strtoupper($currency) !== $currency, InvalidArgumentException::class, "Invalid ISO-4217 currency code: [{$currency}].");
+        throw_if(mb_strlen($currency) !== 3 || mb_strtoupper($currency) !== $currency, InvalidArgumentException::class, "Invalid ISO-4217 currency code: [{$currency}].");
+    }
+
+    public function __toString(): string
+    {
+        return $this->toDecimal().' '.$this->currency;
     }
 
     public static function fromMinorUnits(int $minorUnits, string $currency = 'EUR'): self
@@ -190,11 +195,6 @@ final readonly class Money implements Stringable
         $divisor = 10 ** self::SCALE;
 
         return sprintf('%s%d.%0'.self::SCALE.'d', $sign, intdiv($absolute, $divisor), $absolute % $divisor);
-    }
-
-    public function __toString(): string
-    {
-        return $this->toDecimal().' '.$this->currency;
     }
 
     private function assertSameCurrency(self $other): void

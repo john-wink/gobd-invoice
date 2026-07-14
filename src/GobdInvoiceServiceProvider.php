@@ -84,7 +84,8 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
             // 'fast' trades gaplessness for high concurrency. See the generators.
             static fn (): NumberSequenceGenerator => Config::string('gobd-invoice.numbering.strategy', 'gapless') === 'fast'
             ? new FastSequenceGenerator
-            : new LockingSequenceGenerator);
+            : new LockingSequenceGenerator
+        );
         $this->app->bind(TotalsCalculator::class, GroupedTotalsCalculator::class);
         $this->app->bind(DocumentTotalsCalculator::class, GroupedDocumentTotalsCalculator::class);
         $this->app->bind(TaxRateResolver::class, static fn (): TaxRateResolver => new PeriodTaxRateResolver(

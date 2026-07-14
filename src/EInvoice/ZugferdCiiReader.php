@@ -68,7 +68,7 @@ final class ZugferdCiiReader implements EInvoiceReader
             $reader->getDocumentBuyerReference($buyerReference);
 
             $currency = $this->str($currency) ?? 'EUR';
-            throw_if(in_array(strtoupper($currency), self::NON_TWO_DECIMAL_CURRENCIES, true), GobdInvoiceException::class, "The e-invoice currency [{$currency}] is not a two-decimal currency; this engine represents money in two-decimal minor units and will not silently mis-scale it (BT-5).");
+            throw_if(in_array(mb_strtoupper($currency), self::NON_TWO_DECIMAL_CURRENCIES, true), GobdInvoiceException::class, "The e-invoice currency [{$currency}] is not a two-decimal currency; this engine represents money in two-decimal minor units and will not silently mis-scale it (BT-5).");
 
             $totals = $this->summationTotals($reader, $currency);
 
@@ -295,7 +295,7 @@ final class ZugferdCiiReader implements EInvoiceReader
             return '0';
         }
 
-        $formatted = rtrim(rtrim(number_format($value, 8, '.', ''), '0'), '.');
+        $formatted = mb_rtrim(mb_rtrim(number_format($value, 8, '.', ''), '0'), '.');
 
         return $formatted === '' || $formatted === '-0' ? '0' : $formatted;
     }

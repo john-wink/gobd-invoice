@@ -23,6 +23,11 @@ final readonly class TaxRate implements Stringable
         throw_if(! is_numeric($rate), InvalidArgumentException::class, "Invalid VAT rate: [{$rate}].");
     }
 
+    public function __toString(): string
+    {
+        return $this->rate.'% ('.$this->category->value.')';
+    }
+
     public static function standard(string $rate = '19.0'): self
     {
         return new self($rate, TaxCategory::Standard);
@@ -85,14 +90,9 @@ final readonly class TaxRate implements Stringable
         // The constructor guarantees a numeric rate; the is_numeric() check also
         // re-narrows it to numeric-string for the type checker before bcadd().
         $canonicalRate = is_numeric($rate)
-            ? rtrim(rtrim(bcadd($rate, '0', 4), '0'), '.')
+            ? mb_rtrim(mb_rtrim(bcadd($rate, '0', 4), '0'), '.')
             : $rate;
 
         return $this->category->value.':'.$canonicalRate;
-    }
-
-    public function __toString(): string
-    {
-        return $this->rate.'% ('.$this->category->value.')';
     }
 }

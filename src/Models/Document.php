@@ -78,6 +78,24 @@ class Document extends Model implements InvoiceDocument
     /** @use HasFactory<DocumentFactory> */
     use HasFactory;
 
+    /**
+     * Tax-relevant columns that must not change after finalization. Lifecycle
+     * columns (status, payment fields) are intentionally excluded so a
+     * finalized document can still move to Sent/Paid/Overdue.
+     *
+     * @var list<string>
+     */
+    private const array IMMUTABLE_COLUMNS = [
+        'type', 'number', 'series', 'year', 'sequence', 'currency', 'source_document_id',
+        'line_net_total', 'allowance_total', 'charge_total',
+        'net_total', 'vat_total', 'gross_total',
+        'paid_total', 'rounding_total', 'amount_due', 'vat_accounting_total',
+        'advances_net_total', 'advances_vat_total',
+        'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
+        'advance_deductions', 'seller', 'buyer',
+        'issue_date', 'service_date', 'service_period_start', 'service_period_end', 'finalized_at', 'content_hash', 'finalized_payload',
+    ];
+
     /** @var list<string> */
     protected $guarded = [];
 
@@ -183,24 +201,6 @@ class Document extends Model implements InvoiceDocument
             }
         });
     }
-
-    /**
-     * Tax-relevant columns that must not change after finalization. Lifecycle
-     * columns (status, payment fields) are intentionally excluded so a
-     * finalized document can still move to Sent/Paid/Overdue.
-     *
-     * @var list<string>
-     */
-    private const array IMMUTABLE_COLUMNS = [
-        'type', 'number', 'series', 'year', 'sequence', 'currency', 'source_document_id',
-        'line_net_total', 'allowance_total', 'charge_total',
-        'net_total', 'vat_total', 'gross_total',
-        'paid_total', 'rounding_total', 'amount_due', 'vat_accounting_total',
-        'advances_net_total', 'advances_vat_total',
-        'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
-        'advance_deductions', 'seller', 'buyer',
-        'issue_date', 'service_date', 'service_period_start', 'service_period_end', 'finalized_at', 'content_hash', 'finalized_payload',
-    ];
 
     /**
      * @return array<string, string>

@@ -25,16 +25,6 @@ final readonly class ContentHasher
     }
 
     /**
-     * @param  array<string, mixed>  $payload
-     */
-    private function canonicalize(array $payload): string
-    {
-        self::ksortRecursive($payload);
-
-        return json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-
-    /**
      * @param  array<array-key, mixed>  $array
      */
     private static function ksortRecursive(array &$array): void
@@ -46,5 +36,15 @@ final readonly class ContentHasher
                 self::ksortRecursive($value);
             }
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function canonicalize(array $payload): string
+    {
+        self::ksortRecursive($payload);
+
+        return json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 }

@@ -256,73 +256,6 @@ final readonly class GobdInvoiceManager
         return $this->performFinalize($document);
     }
 
-    private function performFinalize(Document $document): Document
-    {
-        if ($document->documentStatus() !== DocumentStatus::Draft) {
-            throw InvalidStatusTransitionException::between($document->status, DocumentStatus::Finalized);
-        }
-
-        $document->loadMissing('lines');
-
-        $issuedAt = $document->issue_date ?? Date::now();
-        $series = (string) ($document->series ?? $document->type->defaultSeries());
-
-        // A gap-tolerant generator allocates the number up front in its own short
-        // lock (high throughput); the gapless default defers allocation into the
-        // transaction below so a rollback un-burns it.
-        $number = $this->numberSequenceGenerator->allocatesWithinTransaction()
-            ? null
-            : $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
-
-        // Atomic Festschreibung: number allocation (when gapless), content hash,
-        // the document save and the audit entry commit together or not at all, so
-        // a failed finalize never strands a number-bearing draft or an audit-less
-        // finalized document. Keep this transaction tight: slow work (PDF /
-        // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
-        DB::transaction(function () use ($document, $issuedAt, $series, $number): void {
-            $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
-            $this->applyTotals($document, $documentTotals);
-
-            // Fail closed: a tax-relevant document missing a §14 Abs. 4 mandatory
-            // field must not be festgeschrieben. Validate BEFORE allocating the
-            // number so a rejected finalize never burns one (gapless generator).
-            if (Config::boolean('gobd-invoice.content_validation', true)) {
-                $this->documentContentValidator->validate($document);
-            }
-
-            // The §14 Abs. 5 double-VAT gate is a hard correctness protection and
-            // runs unconditionally — it is not disabled by the field-validation
-            // toggle above (which only relaxes §14 Abs. 4 completeness).
-            $this->assertAdvancesDeducted($document);
-
-            $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
-
-            $document->number = (string) $number;
-            $document->series = $number->series;
-            $document->year = $number->year;
-            $document->sequence = $number->sequence;
-            $document->issue_date = $issuedAt;
-
-            [$document->retention_class, $document->retention_until] = $this->retentionFor($document, $issuedAt);
-
-            $payload = $this->buildSnapshot($document);
-            $document->finalized_payload = $payload;
-            $document->content_hash = $this->contentHasher->hash($payload);
-            $document->finalized_at = Date::now();
-            $document->status = DocumentStatus::Finalized;
-            $document->save();
-
-            $this->auditLogger->append($document, 'finalized', [
-                'number' => $document->number,
-                'content_hash' => $document->content_hash,
-            ]);
-        });
-
-        event(new DocumentFinalized($document));
-
-        return $document;
-    }
-
     /**
      * Confirm the document has not been tampered with since finalization, in
      * three layers: (1) the stored snapshot still matches its recorded hash;
@@ -474,11 +407,6 @@ final readonly class GobdInvoiceManager
         return $this->eInvoiceReader->read($xml);
     }
 
-    private function summarizeViolations(ValidationResult $validationResult): string
-    {
-        return implode(', ', array_map(static fn (Violation $violation): string => $violation->ruleId, $validationResult->fatals()));
-    }
-
     /**
      * Cancel a finalized, tax-relevant document by issuing a linked Storno with
      * negated amounts (Storno statt Löschen). The original is never deleted; it
@@ -612,6 +540,78 @@ final readonly class GobdInvoiceManager
         }
 
         return $this->draft($documentType, $attributes, $lines);
+    }
+
+    private function performFinalize(Document $document): Document
+    {
+        if ($document->documentStatus() !== DocumentStatus::Draft) {
+            throw InvalidStatusTransitionException::between($document->status, DocumentStatus::Finalized);
+        }
+
+        $document->loadMissing('lines');
+
+        $issuedAt = $document->issue_date ?? Date::now();
+        $series = (string) ($document->series ?? $document->type->defaultSeries());
+
+        // A gap-tolerant generator allocates the number up front in its own short
+        // lock (high throughput); the gapless default defers allocation into the
+        // transaction below so a rollback un-burns it.
+        $number = $this->numberSequenceGenerator->allocatesWithinTransaction()
+            ? null
+            : $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
+
+        // Atomic Festschreibung: number allocation (when gapless), content hash,
+        // the document save and the audit entry commit together or not at all, so
+        // a failed finalize never strands a number-bearing draft or an audit-less
+        // finalized document. Keep this transaction tight: slow work (PDF /
+        // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
+        DB::transaction(function () use ($document, $issuedAt, $series, $number): void {
+            $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
+            $this->applyTotals($document, $documentTotals);
+
+            // Fail closed: a tax-relevant document missing a §14 Abs. 4 mandatory
+            // field must not be festgeschrieben. Validate BEFORE allocating the
+            // number so a rejected finalize never burns one (gapless generator).
+            if (Config::boolean('gobd-invoice.content_validation', true)) {
+                $this->documentContentValidator->validate($document);
+            }
+
+            // The §14 Abs. 5 double-VAT gate is a hard correctness protection and
+            // runs unconditionally — it is not disabled by the field-validation
+            // toggle above (which only relaxes §14 Abs. 4 completeness).
+            $this->assertAdvancesDeducted($document);
+
+            $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
+
+            $document->number = (string) $number;
+            $document->series = $number->series;
+            $document->year = $number->year;
+            $document->sequence = $number->sequence;
+            $document->issue_date = $issuedAt;
+
+            [$document->retention_class, $document->retention_until] = $this->retentionFor($document, $issuedAt);
+
+            $payload = $this->buildSnapshot($document);
+            $document->finalized_payload = $payload;
+            $document->content_hash = $this->contentHasher->hash($payload);
+            $document->finalized_at = Date::now();
+            $document->status = DocumentStatus::Finalized;
+            $document->save();
+
+            $this->auditLogger->append($document, 'finalized', [
+                'number' => $document->number,
+                'content_hash' => $document->content_hash,
+            ]);
+        });
+
+        event(new DocumentFinalized($document));
+
+        return $document;
+    }
+
+    private function summarizeViolations(ValidationResult $validationResult): string
+    {
+        return implode(', ', array_map(static fn (Violation $violation): string => $violation->ruleId, $validationResult->fatals()));
     }
 
     /**

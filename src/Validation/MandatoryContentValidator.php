@@ -70,11 +70,11 @@ final class MandatoryContentValidator implements DocumentContentValidator
         }
 
         foreach ($document->lines as $documentLine) {
-            if (trim($documentLine->description) === '') {
+            if (mb_trim($documentLine->description) === '') {
                 $violations[] = 'line_description';
             }
 
-            if (trim($documentLine->quantity) === '') {
+            if (mb_trim($documentLine->quantity) === '') {
                 $violations[] = 'line_quantity';
             }
         }

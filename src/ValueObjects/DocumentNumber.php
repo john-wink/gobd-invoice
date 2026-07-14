@@ -23,6 +23,11 @@ final readonly class DocumentNumber implements Stringable
         public string $formatted,
     ) {}
 
+    public function __toString(): string
+    {
+        return $this->formatted;
+    }
+
     /**
      * Build a number from its parts using a format template such as
      * "{type}-{year}-{seq:5}". Supported tokens: {type}, {series}, {year},
@@ -43,7 +48,7 @@ final readonly class DocumentNumber implements Stringable
         ];
 
         if (preg_match('/\{seq:(\d+)\}/', $format, $matches) === 1) {
-            $replacements['{seq:'.$matches[1].'}'] = str_pad(
+            $replacements['{seq:'.$matches[1].'}'] = mb_str_pad(
                 (string) $sequence,
                 (int) $matches[1],
                 '0',
@@ -52,10 +57,5 @@ final readonly class DocumentNumber implements Stringable
         }
 
         return new self($documentType, $series, $year, $sequence, strtr($format, $replacements));
-    }
-
-    public function __toString(): string
-    {
-        return $this->formatted;
     }
 }

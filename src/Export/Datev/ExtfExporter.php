@@ -61,7 +61,7 @@ final readonly class ExtfExporter implements DatevExporter
 
     public function export(iterable $documents, DatevExportOptions $datevExportOptions): string
     {
-        $columnCount = substr_count(self::COLUMN_HEADINGS, self::DELIMITER) + 1;
+        $columnCount = mb_substr_count(self::COLUMN_HEADINGS, self::DELIMITER) + 1;
 
         $rows = [];
         $dates = [];

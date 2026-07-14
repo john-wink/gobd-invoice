@@ -84,6 +84,6 @@ final readonly class Party
 
     private function isFilled(?string $value): bool
     {
-        return $value !== null && trim($value) !== '';
+        return $value !== null && mb_trim($value) !== '';
     }
 }

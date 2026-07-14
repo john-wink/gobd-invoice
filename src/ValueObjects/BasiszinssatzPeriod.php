@@ -27,7 +27,7 @@ final readonly class BasiszinssatzPeriod
         public string $rate,
     ) {
         throw_if(preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) !== 1, InvalidArgumentException::class, "Period start must be an ISO date (YYYY-MM-DD), got [{$from}].");
-        throw_unless(checkdate((int) substr($from, 5, 2), (int) substr($from, 8, 2), (int) substr($from, 0, 4)), InvalidArgumentException::class, "Period start is not a real calendar date: [{$from}].");
+        throw_unless(checkdate((int) mb_substr($from, 5, 2), (int) mb_substr($from, 8, 2), (int) mb_substr($from, 0, 4)), InvalidArgumentException::class, "Period start is not a real calendar date: [{$from}].");
         // Unlike a VAT rate, the Basiszinssatz may be negative; forbid only the
         // non-numeric shapes is_numeric() would wrongly admit (whitespace, "1e1").
         throw_if(preg_match('/^-?\d+(\.\d+)?$/', $rate) !== 1, InvalidArgumentException::class, "Base rate must be a decimal, got [{$rate}].");

@@ -28,6 +28,19 @@ enum DocumentType: string
     case Mahnung = 'mahnung';
 
     /**
+     * The string values of the advance-invoice types, for querying siblings.
+     *
+     * @return list<string>
+     */
+    public static function advanceInvoiceValues(): array
+    {
+        return array_values(array_map(
+            static fn (self $type): string => $type->value,
+            array_filter(self::cases(), static fn (self $type): bool => $type->isAdvanceInvoice()),
+        ));
+    }
+
+    /**
      * Whether the document carries VAT relevance and therefore triggers the
      * §14 UStG content rules and GoBD immutability on finalization.
      */
@@ -68,19 +81,6 @@ enum DocumentType: string
     public function isAdvanceInvoice(): bool
     {
         return $this === self::Abschlagsrechnung || $this === self::Anzahlungsrechnung;
-    }
-
-    /**
-     * The string values of the advance-invoice types, for querying siblings.
-     *
-     * @return list<string>
-     */
-    public static function advanceInvoiceValues(): array
-    {
-        return array_values(array_map(
-            static fn (self $type): string => $type->value,
-            array_filter(self::cases(), static fn (self $type): bool => $type->isAdvanceInvoice()),
-        ));
     }
 
     /**

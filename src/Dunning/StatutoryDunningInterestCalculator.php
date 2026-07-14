@@ -158,7 +158,7 @@ final readonly class StatutoryDunningInterestCalculator implements DunningIntere
         }
 
         // Trim the BCMath scale padding to a canonical decimal (10.2700 -> 10.27).
-        $canonical = str_contains($rate, '.') ? rtrim(rtrim($rate, '0'), '.') : $rate;
+        $canonical = str_contains($rate, '.') ? mb_rtrim(mb_rtrim($rate, '0'), '.') : $rate;
 
         return is_numeric($canonical) ? $canonical : $rate;
     }

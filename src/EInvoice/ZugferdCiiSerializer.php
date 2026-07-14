@@ -147,7 +147,7 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
 
     private function resolveProfile(): int
     {
-        $normalized = mb_strtolower(trim($this->profile));
+        $normalized = mb_strtolower(mb_trim($this->profile));
 
         $this->assertProfileAllowed($normalized);
 
@@ -381,7 +381,7 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
 
     private function unitCode(?string $unit): string
     {
-        $trimmed = $unit !== null ? trim($unit) : '';
+        $trimmed = $unit !== null ? mb_trim($unit) : '';
 
         if ($trimmed === '') {
             return 'C62';

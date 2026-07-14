@@ -30,7 +30,7 @@ final readonly class TaxRatePeriod
         // Shape alone is not enough: reject impossible dates (e.g. 2021-02-30),
         // which would otherwise mis-order periods under the string comparison and
         // silently apply the wrong rate.
-        throw_unless(checkdate((int) substr($from, 5, 2), (int) substr($from, 8, 2), (int) substr($from, 0, 4)), InvalidArgumentException::class, "Period start is not a real calendar date: [{$from}].");
+        throw_unless(checkdate((int) mb_substr($from, 5, 2), (int) mb_substr($from, 8, 2), (int) mb_substr($from, 0, 4)), InvalidArgumentException::class, "Period start is not a real calendar date: [{$from}].");
         // A VAT rate is a non-negative canonical decimal — is_numeric() would also
         // admit negatives ("-19"), whitespace and scientific notation ("1e1").
         throw_if(preg_match('/^\d+(\.\d+)?$/', $standard) !== 1, InvalidArgumentException::class, "Standard rate must be a non-negative decimal, got [{$standard}].");

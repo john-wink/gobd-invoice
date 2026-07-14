@@ -40,7 +40,7 @@ function datevRows(string $payload): array
 {
     $utf8 = mb_convert_encoding($payload, 'UTF-8', 'Windows-1252');
 
-    return explode("\r\n", rtrim($utf8, "\r\n"));
+    return explode("\r\n", mb_rtrim($utf8, "\r\n"));
 }
 
 it('writes an EXTF header row with the DATEV format identity and client metadata', function (): void {
@@ -66,7 +66,7 @@ it('emits the verbatim 125-column heading row as row 2', function (): void {
 
     expect($rows[1])->toStartWith('Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ Umsatz;')
         ->and($rows[1])->toEndWith(';Abw. Skontokonto')
-        ->and(substr_count($rows[1], ';') + 1)->toBe(125);
+        ->and(mb_substr_count($rows[1], ';') + 1)->toBe(125);
 });
 
 it('books one row per document: gross to the debtor against the mapped revenue account', function (): void {

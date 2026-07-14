@@ -86,15 +86,6 @@ class DocumentLine extends Model implements TaxableLine
         });
     }
 
-    private function guardAgainstImmutableParent(): void
-    {
-        $document = $this->document;
-
-        if ($document !== null && $document->isImmutable()) {
-            throw DocumentIsImmutableException::forFinalizedDocument((string) $document->number);
-        }
-    }
-
     /**
      * @return array<string, string>
      */
@@ -109,5 +100,14 @@ class DocumentLine extends Model implements TaxableLine
             'line_adjustments' => 'array',
             'line_net_minor' => 'integer',
         ];
+    }
+
+    private function guardAgainstImmutableParent(): void
+    {
+        $document = $this->document;
+
+        if ($document !== null && $document->isImmutable()) {
+            throw DocumentIsImmutableException::forFinalizedDocument((string) $document->number);
+        }
     }
 }
