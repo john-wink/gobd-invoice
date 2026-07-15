@@ -222,6 +222,19 @@ final readonly class GobdInvoiceManager
                 $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
             }
 
+            // Advance deductions (Schlussrechnung) are re-resolvable while the
+            // document is still a draft, just like its lines — so editing one keeps
+            // the deducted advances in sync. A caller that omits `deducts` leaves the
+            // existing snapshot untouched; an empty list clears it.
+            if (array_key_exists('deducts', $attributes)) {
+                $document->advance_deductions = $this->resolveAdvanceDeductions(
+                    $attributes['deducts'],
+                    $currency,
+                    $document->documentable_type,
+                    $document->documentable_id,
+                );
+            }
+
             $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
             $document->save();
 

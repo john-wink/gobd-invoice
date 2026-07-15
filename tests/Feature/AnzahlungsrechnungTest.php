@@ -53,3 +53,54 @@ it('deducts an Anzahlungsrechnung net and VAT in the Schlussrechnung', function 
         ->and($schluss->amount_due)->toBe(2380)
         ->and(GobdInvoice::verify($schluss))->toBeTrue();
 });
+
+it('re-resolves advance deductions when a Schlussrechnung draft is edited', function (): void {
+    $anzahlung = finalizedAnzahlung(79);
+
+    // Drafted first WITHOUT deducting the advance.
+    $schluss = GobdInvoice::draft(DocumentType::Schlussrechnung, [
+        'documentable_type' => 'order',
+        'documentable_id' => 79,
+    ], [
+        ['description' => 'Gesamtleistung', 'quantity' => '1', 'unit_price' => '30.00', 'tax_rate' => '19.0'],
+    ]);
+
+    expect($schluss->advance_deductions)->toBeNull();
+
+    // Editing the draft deducts it — updateDraft must resolve `deducts` too.
+    $schluss = GobdInvoice::updateDraft($schluss, [
+        'deducts' => [$anzahlung->id],
+    ], [
+        ['description' => 'Gesamtleistung', 'quantity' => '1', 'unit_price' => '30.00', 'tax_rate' => '19.0'],
+    ]);
+
+    expect($schluss->advance_deductions)->toHaveCount(1);
+
+    $finalized = GobdInvoice::finalize($schluss);
+
+    expect($finalized->advances_net_total)->toBe(1000)
+        ->and($finalized->advances_vat_total)->toBe(190)
+        ->and($finalized->amount_due)->toBe(2380);
+});
+
+it('clears advance deductions when a Schlussrechnung draft is edited with an empty list', function (): void {
+    $anzahlung = finalizedAnzahlung(80);
+
+    $schluss = GobdInvoice::draft(DocumentType::Schlussrechnung, [
+        'documentable_type' => 'order',
+        'documentable_id' => 80,
+        'deducts' => [$anzahlung->id],
+    ], [
+        ['description' => 'Gesamtleistung', 'quantity' => '1', 'unit_price' => '30.00', 'tax_rate' => '19.0'],
+    ]);
+
+    expect($schluss->advance_deductions)->toHaveCount(1);
+
+    $schluss = GobdInvoice::updateDraft($schluss, [
+        'deducts' => [],
+    ], [
+        ['description' => 'Gesamtleistung', 'quantity' => '1', 'unit_price' => '30.00', 'tax_rate' => '19.0'],
+    ]);
+
+    expect($schluss->advance_deductions)->toBeNull();
+});
