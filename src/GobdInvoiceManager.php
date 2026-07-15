@@ -288,6 +288,72 @@ final readonly class GobdInvoiceManager
     }
 
     /**
+     * Record a payment against a finalized document: raise paid_total, lower
+     * amount_due, and advance the status (PartiallyPaid → Paid). Payment tracking
+     * is NOT §14 content, so it may change after Festschreibung; the §14 columns
+     * stay frozen. The payment is written to the audit trail.
+     */
+    public function recordPayment(Document $document, int $amountMinor, ?Carbon $paidAt = null): Document
+    {
+        throw_if($document->finalized_at === null, GobdInvoiceException::class, "Only a finalized document can receive a payment; [{$document->number}] is not finalized.");
+        throw_if($amountMinor <= 0, GobdInvoiceException::class, 'A payment amount must be positive.');
+
+        $paid = (int) $document->paid_total + $amountMinor;
+        $gross = (int) $document->gross_total;
+        $target = $paid >= $gross ? DocumentStatus::Paid : DocumentStatus::PartiallyPaid;
+
+        throw_unless(
+            $document->status === $target || $document->status->canTransitionTo($target),
+            GobdInvoiceException::class,
+            "Cannot record a payment on a [{$document->status->value}] document.",
+        );
+
+        $document->paid_total = $paid;
+        $document->amount_due = max(0, $gross - $paid);
+        $document->status = $target;
+        $document->save();
+
+        $this->auditLogger->append($document, 'payment_recorded', [
+            'amount_minor' => $amountMinor,
+            'paid_total' => $paid,
+            'paid_at' => ($paidAt ?? Date::now())->toDateString(),
+        ]);
+
+        return $document;
+    }
+
+    /**
+     * Mark a finalized document as sent (dispatched to the recipient).
+     */
+    public function markSent(Document $document): Document
+    {
+        throw_if($document->finalized_at === null, GobdInvoiceException::class, "Only a finalized document can be marked as sent; [{$document->number}] is not finalized.");
+        throw_unless($document->status->canTransitionTo(DocumentStatus::Sent), GobdInvoiceException::class, "Cannot mark a [{$document->status->value}] document as sent.");
+
+        $document->status = DocumentStatus::Sent;
+        $document->save();
+
+        $this->auditLogger->append($document, 'sent', []);
+
+        return $document;
+    }
+
+    /**
+     * Mark an unpaid, past-due document as overdue (typically from a scheduler).
+     */
+    public function markOverdue(Document $document): Document
+    {
+        throw_unless($document->status->canTransitionTo(DocumentStatus::Overdue), GobdInvoiceException::class, "Cannot mark a [{$document->status->value}] document as overdue.");
+
+        $document->status = DocumentStatus::Overdue;
+        $document->save();
+
+        $this->auditLogger->append($document, 'overdue', []);
+
+        return $document;
+    }
+
+    /**
      * Serialize a finalized document into a structured EN 16931 e-invoice
      * (ZUGFeRD/Factur-X or XRechnung CII XML per the configured format/profile).
      * The document must be finalized and of an invoice type; the bound

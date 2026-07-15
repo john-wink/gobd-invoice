@@ -102,12 +102,14 @@ it('fails loud finalizing a non-EUR invoice without an accounting rate', functio
     expect(fn (): Document => GobdInvoice::finalize($draft))->toThrow(InvalidArgumentException::class);
 });
 
-it('blocks mutation of a new finalized total column (GoBD Unveränderbarkeit)', function (): void {
+it('blocks mutation of a finalized tax-total column (GoBD Unveränderbarkeit)', function (): void {
     $document = finalizeWith([], [
         ['description' => 'A', 'quantity' => '1', 'unit_price' => '100.00', 'tax_rate' => '19.0'],
     ]);
 
-    $document->amount_due = 1;
+    // net_total is a §14 tax column and stays frozen. (paid_total / amount_due are
+    // deliberately mutable now — they track payments after Festschreibung.)
+    $document->net_total = 1;
 
     expect(fn () => $document->save())->toThrow(DocumentIsImmutableException::class);
 });

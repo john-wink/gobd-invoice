@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JohnWink\GobdInvoice\Models;
 
 use Illuminate\Database\Eloquent\Attributes\UseFactory;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -89,7 +90,10 @@ class Document extends Model implements InvoiceDocument
         'type', 'number', 'series', 'year', 'sequence', 'currency', 'source_document_id',
         'line_net_total', 'allowance_total', 'charge_total',
         'net_total', 'vat_total', 'gross_total',
-        'paid_total', 'rounding_total', 'amount_due', 'vat_accounting_total',
+        // NOTE: paid_total, amount_due and status are intentionally NOT immutable —
+        // payment tracking legitimately changes after Festschreibung (§14 content
+        // stays frozen; the payment ledger and status lifecycle move on).
+        'rounding_total', 'vat_accounting_total',
         'advances_net_total', 'advances_vat_total',
         'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
         'advance_deductions', 'seller', 'buyer',
@@ -114,6 +118,27 @@ class Document extends Model implements InvoiceDocument
     public function documentStatus(): DocumentStatus
     {
         return $this->status;
+    }
+
+    /**
+     * The payment due date (virtual): the issue date plus the payment-terms net
+     * days, falling back to the issue date when no term is set.
+     *
+     * @return Attribute<Carbon|null, never>
+     */
+    protected function dueDate(): Attribute
+    {
+        return Attribute::get(function (): ?Carbon {
+            if (! $this->issue_date instanceof Carbon) {
+                return null;
+            }
+
+            $netDays = $this->payment_terms['net_days'] ?? null;
+
+            return $netDays !== null
+                ? $this->issue_date->copy()->addDays((int) $netDays)
+                : $this->issue_date->copy();
+        });
     }
 
     public function isImmutable(): bool
