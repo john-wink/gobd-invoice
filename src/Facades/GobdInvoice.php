@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Facades;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Facade;
 use JohnWink\En16931\ValidationResult;
 use JohnWink\GobdInvoice\Enums\DocumentType;
@@ -30,7 +31,7 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
  * @method static Document dun(Document $document, DunningOptions $options)
  * @method static Document cancel(Document $document, string $reason)
  * @method static Document convert(Document $document, DocumentType $target, array<string, mixed> $overrides = [])
- * @method static Document recordPayment(Document $document, int $amountMinor, ?\Illuminate\Support\Carbon $paidAt = null)
+ * @method static Document recordPayment(Document $document, int $amountMinor, ?Carbon $paidAt = null)
  * @method static Document markSent(Document $document)
  * @method static Document markOverdue(Document $document)
  *

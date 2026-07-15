@@ -135,7 +135,7 @@ class Document extends Model implements InvoiceDocument
 
             $netDays = $this->payment_terms['net_days'] ?? null;
 
-            return $netDays !== null
+            return is_numeric($netDays)
                 ? $this->issue_date->copy()->addDays((int) $netDays)
                 : $this->issue_date->copy();
         });
