@@ -262,16 +262,16 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
 
     private function applyPaymentTerms(ZugferdDocumentBuilder $zugferdDocumentBuilder, Document $document): void
     {
-        $terms = $document->payment_terms;
-        if ($terms === null) {
-            return;
-        }
+        $terms = is_array($document->payment_terms) ? $document->payment_terms : [];
 
         $note = isset($terms['note']) && is_scalar($terms['note']) ? (string) $terms['note'] : null;
         $netDays = isset($terms['net_days']) && is_numeric($terms['net_days']) ? (int) $terms['net_days'] : null;
 
-        $issueDate = $document->issue_date;
-        $dueDate = $netDays !== null && $issueDate !== null ? $issueDate->copy()->addDays($netDays) : null;
+        // BT-9 payment due date: always emit it when known. EN 16931 BR-CO-25
+        // requires a due date (or payment terms) whenever an amount is due; the
+        // due_date accessor falls back to the issue date (payment on receipt) when
+        // no net-days term is set, so any invoice stays conformant.
+        $dueDate = $document->due_date;
         $description = $note ?? ($netDays !== null ? "Zahlbar innerhalb von {$netDays} Tagen." : null);
 
         if ($description === null && $dueDate === null) {

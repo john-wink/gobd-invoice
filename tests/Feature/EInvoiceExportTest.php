@@ -62,6 +62,19 @@ it('exports a finalized Rechnung as EN 16931 CII XML', function (): void {
         ->and(ciiValue($xpath, '//ram:SpecifiedTradeSettlementHeaderMonetarySummation/ram:DuePayableAmount'))->toBe('238.00');  // BT-115
 });
 
+it('emits a due date so a term-less invoice satisfies EN 16931 BR-CO-25', function (): void {
+    // No payment terms set — the serializer must still emit BT-9 (due date =
+    // issue date) so the validation has no fatal violations.
+    $invoice = GobdInvoice::finalize(draftWithParties(DocumentType::Rechnung, [
+        ['description' => 'Beratung', 'quantity' => '1', 'unit_price' => '100.00', 'tax_rate' => '19.0'],
+    ], ['service_date' => '2026-06-20']));
+
+    $xml = GobdInvoice::eInvoiceXml($invoice);
+
+    expect(ciiValue(ciiXpath($xml), '//ram:SpecifiedTradePaymentTerms/ram:DueDateDateTime/udt:DateTimeString'))->not->toBeNull()
+        ->and(GobdInvoice::validateEInvoice($xml)->fatals())->toBeEmpty();
+});
+
 it('maps the seller VAT id and the line detail', function (): void {
     $invoice = GobdInvoice::finalize(draftWithParties(DocumentType::Rechnung, [
         ['description' => 'Beratung', 'quantity' => '2', 'unit' => 'Stunde', 'unit_price' => '100.00', 'tax_rate' => '19.0'],
