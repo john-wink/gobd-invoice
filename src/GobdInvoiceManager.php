@@ -910,8 +910,20 @@ final readonly class GobdInvoiceManager
         $financial = $document->is_financial_sector
             || Config::boolean('gobd-invoice.retention.financial_sector', false);
 
-        $years = $financial ? 10 : Config::integer('gobd-invoice.retention.voucher_years', 8);
-        $class = $financial ? 'financial_sector' : 'voucher';
+        // §147 AO retention class by document kind: tax-relevant documents are
+        // Buchungsbelege (voucher, 8y); non-tax-relevant ones (Angebot,
+        // Kostenvoranschlag, Leistungsnachweis, Mahnung, …) are correspondence
+        // (6y). A BaFin-supervised financial-sector tenant keeps 10y for all.
+        if ($financial) {
+            $class = 'financial_sector';
+            $years = 10;
+        } elseif ($document->type->isTaxRelevant()) {
+            $class = 'voucher';
+            $years = Config::integer('gobd-invoice.retention.voucher_years', 8);
+        } else {
+            $class = 'correspondence';
+            $years = Config::integer('gobd-invoice.retention.correspondence_years', 6);
+        }
 
         // The clock starts at the END of the calendar year (§147 Abs. 4 AO).
         $until = $issuedAt->copy()->endOfYear()->addYears($years)->startOfDay();

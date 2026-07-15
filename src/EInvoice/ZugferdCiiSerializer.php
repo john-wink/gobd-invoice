@@ -199,6 +199,11 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
         } else {
             throw_if($this->requiresBuyerVatId($document), GobdInvoiceException::class, 'A reverse-charge (AE) or intra-community (K) e-invoice requires the buyer VAT identifier (BT-48, BR-AE-02 / BR-IC-02).');
         }
+
+        // BT-43: buyer contact email (BG-9), when known.
+        if ($buyer->email !== null && mb_trim($buyer->email) !== '') {
+            $zugferdDocumentBuilder->setDocumentBuyerContact(null, null, null, null, $buyer->email);
+        }
     }
 
     private function applyLines(ZugferdDocumentBuilder $zugferdDocumentBuilder, Document $document): void

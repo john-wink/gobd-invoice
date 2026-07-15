@@ -26,7 +26,7 @@ it('recognises a tax number or a VAT id as a tax identifier', function (): void 
 });
 
 it('round-trips through array form', function (): void {
-    $party = new Party('Muster GmbH', 'Hauptstr. 1', '10115', 'Berlin', 'DE', '29/123/45678', 'DE123456789');
+    $party = new Party('Muster GmbH', 'Hauptstr. 1', '10115', 'Berlin', 'DE', '29/123/45678', 'DE123456789', 'rechnung@muster.de');
 
     $rebuilt = Party::fromArray($party->toArray());
 
@@ -34,5 +34,6 @@ it('round-trips through array form', function (): void {
         ->and($rebuilt->postalCode)->toBe('10115')
         ->and($rebuilt->country)->toBe('DE')
         ->and($rebuilt->vatId)->toBe('DE123456789')
+        ->and($rebuilt->email)->toBe('rechnung@muster.de')  // BT-43/BT-41 contact email
         ->and($rebuilt->hasCompleteAddress())->toBeTrue();
 });

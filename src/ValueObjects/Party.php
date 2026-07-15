@@ -23,6 +23,8 @@ final readonly class Party
         public ?string $country = null,
         public ?string $taxNumber = null,
         public ?string $vatId = null,
+        // EN 16931 BT-43 (buyer) / BT-41 (seller) contact email address.
+        public ?string $email = null,
     ) {}
 
     /**
@@ -44,6 +46,7 @@ final readonly class Party
             $string('country'),
             $string('tax_number'),
             $string('vat_id'),
+            $string('email'),
         );
     }
 
@@ -60,6 +63,7 @@ final readonly class Party
             'country' => $this->country,
             'tax_number' => $this->taxNumber,
             'vat_id' => $this->vatId,
+            'email' => $this->email,
         ];
     }
 
