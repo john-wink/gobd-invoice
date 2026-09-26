@@ -4,17 +4,19 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
+use JohnWink\GobdInvoice\Models\Concerns\HasConfiguredKey;
 use Override;
 
 /**
- * One monotonically increasing counter per (document_type, series, year). Rows
- * are locked with `lockForUpdate()` during number assignment to make duplicate
- * numbers impossible. See docs/research/08-package-architecture.md (B8).
+ * One monotonically increasing counter per (tenant, document_type, series,
+ * year). Rows are locked with `lockForUpdate()` during number assignment to
+ * make duplicate numbers impossible. See docs/research/08-package-architecture.md (B8).
  *
- * @property int $id
+ * @property int|string $id
  * @property string $document_type
  * @property string $series
  * @property int $year
@@ -22,10 +24,10 @@ use Override;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
+#[Unguarded]
 class NumberSequence extends Model
 {
-    /** @var list<string> */
-    protected $guarded = [];
+    use HasConfiguredKey;
 
     public function __construct(array $attributes = [])
     {

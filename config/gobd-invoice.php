@@ -40,6 +40,41 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Database keys
+    |--------------------------------------------------------------------------
+    |
+    | 'key_type' selects the keys of all package tables: 'bigint'
+    | (auto-increment, the default) or 'uuid' (UUIDv7). It covers the primary
+    | keys, the document references (document_id, source_document_id), the
+    | tenant column and the host `documentable` morph. Decide it before the
+    | first migration — the migrations read it.
+    |
+    */
+    'database' => [
+        'key_type' => 'bigint', // bigint | uuid
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Multi-tenancy
+    |--------------------------------------------------------------------------
+    |
+    | null (the default) keeps the package single-tenant: a document number is
+    | unique across the whole table. A column name (e.g. 'team_id') makes it
+    | multi-tenant: every package table carries that column (NOT NULL, of the
+    | configured key type), each tenant runs its own number counters, a number
+    | is unique per tenant — UNIQUE(tenant, number) — and a row never changes
+    | its tenant. draft() then needs the tenant in its attributes; Storno,
+    | conversion and Mahnung inherit it from their source document. Decide it
+    | before the first migration — the migrations read it.
+    |
+    */
+    'tenancy' => [
+        'column' => null,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Default currency
     |--------------------------------------------------------------------------
     |

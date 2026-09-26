@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JohnWink\GobdInvoice;
 
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
@@ -27,8 +28,10 @@ use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
 use JohnWink\GobdInvoice\Contracts\GobdDataExporter;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Contracts\SegregationPolicy;
+use JohnWink\GobdInvoice\Database\Tenancy;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
+use JohnWink\GobdInvoice\Enums\KeyType;
 use JohnWink\GobdInvoice\Enums\PriceMode;
 use JohnWink\GobdInvoice\Enums\TaxCategory;
 use JohnWink\GobdInvoice\Events\DocumentCancelled;
@@ -105,6 +108,7 @@ final readonly class GobdInvoiceManager
         $currency = $this->toStringValue($attributes['currency'] ?? null, Config::string('gobd-invoice.currency', 'EUR'));
 
         $document = new $model;
+        $this->assignTenant($document, $attributes);
         $document->type = $documentType;
         $document->status = DocumentStatus::Draft;
         $document->currency = $currency;
@@ -139,18 +143,17 @@ final readonly class GobdInvoiceManager
         } elseif (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
             // Raw morph columns, e.g. carried forward by convert() without a Model.
             $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
-            $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
+            $document->documentable_id = KeyType::configured()->normalize($attributes['documentable_id'], 'documentable_id');
         }
 
         if (isset($attributes['source_document_id'])) {
-            $document->source_document_id = $this->toIntOrFail($attributes['source_document_id'], 'source_document_id');
+            $document->source_document_id = KeyType::configured()->normalize($attributes['source_document_id'], 'source_document_id');
         }
 
         $document->advance_deductions = $this->resolveAdvanceDeductions(
             $attributes['deducts'] ?? null,
             $currency,
-            $document->documentable_type,
-            $document->documentable_id,
+            $document,
         );
 
         if (isset($attributes['meta']) && is_array($attributes['meta'])) {
@@ -164,9 +167,7 @@ final readonly class GobdInvoiceManager
 
         $document->save();
 
-        foreach (array_values($lines) as $index => $line) {
-            $document->lines()->create($this->buildLineAttributes($index + 1, $line, $currency));
-        }
+        $this->createLines($document, $lines, $currency);
 
         $document->load('lines');
 
@@ -219,7 +220,7 @@ final readonly class GobdInvoiceManager
             }
             if (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
                 $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
-                $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
+                $document->documentable_id = KeyType::configured()->normalize($attributes['documentable_id'], 'documentable_id');
             }
 
             // Advance deductions (Schlussrechnung) are re-resolvable while the
@@ -230,8 +231,7 @@ final readonly class GobdInvoiceManager
                 $document->advance_deductions = $this->resolveAdvanceDeductions(
                     $attributes['deducts'],
                     $currency,
-                    $document->documentable_type,
-                    $document->documentable_id,
+                    $document,
                 );
             }
 
@@ -240,9 +240,7 @@ final readonly class GobdInvoiceManager
 
             // Replace the line items (a draft carries no legal identity yet).
             $document->lines()->delete();
-            foreach (array_values($lines) as $index => $line) {
-                $document->lines()->create($this->buildLineAttributes($index + 1, $line, $currency));
-            }
+            $this->createLines($document, $lines, $currency);
         });
 
         $document->load('lines');
@@ -454,6 +452,7 @@ final readonly class GobdInvoiceManager
         $dunningAssessment = $this->dunningInterestCalculator->assess($money, $dunningOptions);
 
         return $this->draft(DocumentType::Mahnung, [
+            ...$this->tenantAttributesOf($document),
             'currency' => $document->currency,
             'series' => DocumentType::Mahnung->defaultSeries(),
             'seller' => $document->seller,
@@ -504,7 +503,8 @@ final readonly class GobdInvoiceManager
 
         $document->loadMissing('lines');
 
-        $stornoLines = $document->lines->map(static fn (DocumentLine $documentLine): array => [
+        $stornoLines = $document->lines->map(fn (DocumentLine $documentLine): array => [
+            ...$this->passthroughValuesOf($documentLine),
             'description' => $documentLine->description,
             'quantity' => '1',
             'unit' => $documentLine->unit,
@@ -531,6 +531,7 @@ final readonly class GobdInvoiceManager
         // any prior payment outside this document.
         $storno = DB::transaction(function () use ($document, $reason, $stornoLines, $stornoAdjustments): Document {
             $storno = $this->draft(DocumentType::Storno, [
+                ...$this->tenantAttributesOf($document),
                 'currency' => $document->currency,
                 'series' => DocumentType::Storno->defaultSeries(),
                 'service_date' => $document->service_date,
@@ -581,7 +582,8 @@ final readonly class GobdInvoiceManager
 
         $document->loadMissing('lines');
 
-        $lines = $document->lines->map(static fn (DocumentLine $documentLine): array => [
+        $lines = $document->lines->map(fn (DocumentLine $documentLine): array => [
+            ...$this->passthroughValuesOf($documentLine),
             'description' => $documentLine->description,
             'quantity' => $documentLine->quantity,
             'unit' => $documentLine->unit,
@@ -612,6 +614,7 @@ final readonly class GobdInvoiceManager
         // advance-deduction cross-order guard and the DocumentDrafted event.
         $attributes['currency'] = $document->currency;
         $attributes['source_document_id'] = $document->id;
+        $attributes = [...$attributes, ...$this->tenantAttributesOf($document)];
 
         if (! array_key_exists('documentable', $overrides) && $document->documentable_type !== null && $document->documentable_id !== null) {
             $attributes['documentable_type'] = $document->documentable_type;
@@ -635,16 +638,18 @@ final readonly class GobdInvoiceManager
         // A gap-tolerant generator allocates the number up front in its own short
         // lock (high throughput); the gapless default defers allocation into the
         // transaction below so a rollback un-burns it.
+        $tenant = $document->tenantKey();
+
         $number = $this->numberSequenceGenerator->allocatesWithinTransaction()
             ? null
-            : $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
+            : $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year, $tenant);
 
         // Atomic Festschreibung: number allocation (when gapless), content hash,
         // the document save and the audit entry commit together or not at all, so
         // a failed finalize never strands a number-bearing draft or an audit-less
         // finalized document. Keep this transaction tight: slow work (PDF /
         // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
-        DB::transaction(function () use ($document, $issuedAt, $series, $number): void {
+        DB::transaction(function () use ($document, $issuedAt, $series, $number, $tenant): void {
             $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
             $this->applyTotals($document, $documentTotals);
 
@@ -660,7 +665,7 @@ final readonly class GobdInvoiceManager
             // toggle above (which only relaxes §14 Abs. 4 completeness).
             $this->assertAdvancesDeducted($document);
 
-            $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
+            $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year, $tenant);
 
             $document->number = (string) $number;
             $document->series = $number->series;
@@ -1101,28 +1106,32 @@ final readonly class GobdInvoiceManager
      * (non-cancelled) Abschlagsrechnung, in a different currency, or — when the
      * final invoice is linked to an order — belongs to a different order.
      *
+     * In multi-tenant mode only advances of the final invoice's own tenant are
+     * found — an advance of another tenant reads as "not found".
+     *
      * @return array<int, array<string, mixed>>|null
      */
-    private function resolveAdvanceDeductions(mixed $deducts, string $currency, ?string $documentableType, ?int $documentableId): ?array
+    private function resolveAdvanceDeductions(mixed $deducts, string $currency, Document $document): ?array
     {
         if (! is_array($deducts) || $deducts === []) {
             return null;
         }
 
-        /** @var class-string<Document> $model */
-        $model = config('gobd-invoice.models.document', Document::class);
+        $documentableType = $document->documentable_type;
+        $documentableId = $document->documentable_id;
+        $keyType = KeyType::configured();
 
         $specs = [];
         $seen = [];
 
         foreach ($deducts as $deduct) {
-            throw_unless(is_int($deduct) || (is_string($deduct) && ctype_digit($deduct)), GobdInvoiceException::class, 'A deducted advance must be referenced by an integer document id.');
-            $id = (int) $deduct;
+            throw_unless($keyType->accepts($deduct), GobdInvoiceException::class, "A deducted advance must be referenced by a {$keyType->value} document id.");
+            $id = $keyType->normalize($deduct, 'deducts');
 
             throw_if(in_array($id, $seen, true), GobdInvoiceException::class, "Advance [{$id}] is deducted more than once.");
             $seen[] = $id;
 
-            $advance = $model::query()->find($id);
+            $advance = $this->documentsOfTenant($document)->find($id);
 
             throw_unless($advance instanceof Document, GobdInvoiceException::class, "Deducted advance [{$id}] was not found.");
             throw_unless($advance->type->isAdvanceInvoice(), GobdInvoiceException::class, "Document [{$id}] is not an advance invoice (Abschlags-/Anzahlungsrechnung) and cannot be deducted in a Schlussrechnung.");
@@ -1167,19 +1176,17 @@ final readonly class GobdInvoiceManager
             return;
         }
 
+        $keyType = KeyType::configured();
         $deductedIds = [];
         foreach ($document->advance_deductions ?? [] as $spec) {
-            if (isset($spec['document_id']) && is_numeric($spec['document_id'])) {
-                $deductedIds[] = (int) $spec['document_id'];
+            if (isset($spec['document_id']) && $keyType->accepts($spec['document_id'])) {
+                $deductedIds[] = $keyType->normalize($spec['document_id'], 'document_id');
             }
         }
 
-        /** @var class-string<Document> $model */
-        $model = config('gobd-invoice.models.document', Document::class);
-
         // A cancelled (Storno'd) advance had its VAT reversed by its Storno, so it
         // must NOT be deducted and does not count as undeducted here.
-        $hasUndeducted = $model::query()
+        $hasUndeducted = $this->documentsOfTenant($document)
             ->where('documentable_type', $document->documentable_type)
             ->where('documentable_id', $document->documentable_id)
             ->whereIn('type', DocumentType::advanceInvoiceValues())
@@ -1189,6 +1196,113 @@ final readonly class GobdInvoiceManager
             ->exists();
 
         throw_if($hasUndeducted, DocumentContentException::withViolations($document->number, ['undeducted_advances']));
+    }
+
+    /**
+     * The documents a given document may relate to: all of them single-tenant,
+     * only those of its own tenant in multi-tenant mode.
+     *
+     * @return Builder<Document>
+     */
+    private function documentsOfTenant(Document $document): Builder
+    {
+        /** @var class-string<Document> $model */
+        $model = config('gobd-invoice.models.document', Document::class);
+
+        $query = $model::query();
+        $column = Tenancy::column();
+
+        if ($column !== null) {
+            $query->where($column, $document->tenantKey());
+        }
+
+        return $query;
+    }
+
+    /**
+     * In multi-tenant mode a document belongs to exactly one tenant, handed in
+     * by the host with the draft attributes (from its own tenant context, never
+     * from request input). Without it the draft is refused.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function assignTenant(Document $document, array $attributes): void
+    {
+        $column = Tenancy::column();
+
+        if ($column === null) {
+            return;
+        }
+
+        $tenant = $attributes[$column] ?? null;
+
+        throw_if($tenant === null, GobdInvoiceException::class, "gobd-invoice is multi-tenant; draft() needs the tenant as the [{$column}] attribute.");
+
+        $document->setAttribute($column, KeyType::configured()->normalize($tenant, $column));
+    }
+
+    /**
+     * The tenant attribute a follow-up document (Storno, conversion, Mahnung)
+     * inherits from its source document.
+     *
+     * @return array<string, int|string>
+     */
+    private function tenantAttributesOf(Document $document): array
+    {
+        return Tenancy::attributesFor(Tenancy::isEnabled() ? $document->tenantKey() : null);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $lines
+     */
+    private function createLines(Document $document, array $lines, string $currency): void
+    {
+        $tenant = $this->tenantAttributesOf($document);
+
+        foreach (array_values($lines) as $index => $line) {
+            $document->lines()->create([
+                ...$this->passthroughValues($line),
+                ...$this->buildLineAttributes($index + 1, $line, $currency),
+                ...$tenant,
+            ]);
+        }
+    }
+
+    /**
+     * The host-owned line attributes ({@see DocumentLine::passthroughAttributes()})
+     * present in a line input.
+     *
+     * @param  array<string, mixed>  $line
+     * @return array<string, mixed>
+     */
+    private function passthroughValues(array $line): array
+    {
+        return array_intersect_key($line, array_flip($this->lineModel()::passthroughAttributes()));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function passthroughValuesOf(DocumentLine $documentLine): array
+    {
+        $values = [];
+
+        foreach ($this->lineModel()::passthroughAttributes() as $attribute) {
+            $values[$attribute] = $documentLine->getAttribute($attribute);
+        }
+
+        return $values;
+    }
+
+    /**
+     * @return class-string<DocumentLine>
+     */
+    private function lineModel(): string
+    {
+        /** @var class-string<DocumentLine> $model */
+        $model = config('gobd-invoice.models.document_line', DocumentLine::class);
+
+        return $model;
     }
 
     private function parseDate(mixed $value): ?Carbon

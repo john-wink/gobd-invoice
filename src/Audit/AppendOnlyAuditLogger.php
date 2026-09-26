@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use JohnWink\GobdInvoice\Contracts\ActorResolver;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
+use JohnWink\GobdInvoice\Database\Tenancy;
 use JohnWink\GobdInvoice\Models\AuditLogEntry;
 
 /**
@@ -38,7 +39,7 @@ final readonly class AppendOnlyAuditLogger implements AuditLogger
 
         $contentHash = $this->chainHash($documentId, $event, $context, $previousHash);
 
-        return $model::create([
+        $entry = new $model([
             'document_id' => $documentId,
             'event' => $event,
             'actor' => $this->actorResolver->resolve(),
@@ -46,6 +47,16 @@ final readonly class AppendOnlyAuditLogger implements AuditLogger
             'content_hash' => $contentHash,
             'previous_hash' => $previousHash,
         ]);
+
+        $tenant = $invoiceDocument instanceof Model ? Tenancy::of($invoiceDocument) : null;
+
+        foreach (Tenancy::attributesFor($tenant) as $column => $value) {
+            $entry->setAttribute($column, $value);
+        }
+
+        $entry->save();
+
+        return $entry;
     }
 
     public function verify(InvoiceDocument $invoiceDocument): bool

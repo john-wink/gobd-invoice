@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Attributes\UseFactory;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
@@ -16,9 +17,13 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Database\Factories\DocumentFactory;
+use JohnWink\GobdInvoice\Database\PostgresGuards;
+use JohnWink\GobdInvoice\Database\Tenancy;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
+use JohnWink\GobdInvoice\Enums\KeyType;
 use JohnWink\GobdInvoice\Exceptions\DocumentIsImmutableException;
+use JohnWink\GobdInvoice\Models\Concerns\HasConfiguredKey;
 use Override;
 
 /**
@@ -27,7 +32,7 @@ use Override;
  * Once finalized (festgeschrieben) the tax-relevant columns are immutable
  * (GoBD Unveränderbarkeit) — the model enforces this with model-event guards.
  *
- * @property int $id
+ * @property int|string $id
  * @property DocumentType $type
  * @property DocumentStatus $status
  * @property string|null $created_by
@@ -62,9 +67,9 @@ use Override;
  * @property Carbon|null $finalized_at
  * @property string|null $content_hash
  * @property array<string, mixed>|null $finalized_payload
- * @property int|null $source_document_id
+ * @property int|string|null $source_document_id
  * @property string|null $documentable_type
- * @property int|null $documentable_id
+ * @property int|string|null $documentable_id
  * @property string $retention_class
  * @property Carbon|null $retention_until
  * @property bool $is_financial_sector
@@ -74,15 +79,19 @@ use Override;
  * @property-read Collection<int, DocumentLine> $lines
  */
 #[UseFactory(DocumentFactory::class)]
+#[Unguarded]
 class Document extends Model implements InvoiceDocument
 {
+    use HasConfiguredKey;
+
     /** @use HasFactory<DocumentFactory> */
     use HasFactory;
 
     /**
      * Tax-relevant columns that must not change after finalization. Lifecycle
      * columns (status, payment fields) are intentionally excluded so a
-     * finalized document can still move to Sent/Paid/Overdue.
+     * finalized document can still move to Sent/Paid/Overdue. The PostgreSQL
+     * guard trigger enforces the same list ({@see PostgresGuards}).
      *
      * @var list<string>
      */
@@ -100,9 +109,6 @@ class Document extends Model implements InvoiceDocument
         'issue_date', 'service_date', 'service_period_start', 'service_period_end', 'finalized_at', 'content_hash', 'finalized_payload',
     ];
 
-    /** @var list<string> */
-    protected $guarded = [];
-
     public function __construct(array $attributes = [])
     {
         parent::__construct($attributes);
@@ -110,9 +116,26 @@ class Document extends Model implements InvoiceDocument
         $this->setTable(Config::string('gobd-invoice.table_names.documents', 'gobd_documents'));
     }
 
+    /**
+     * @return list<string>
+     */
+    public static function immutableColumns(): array
+    {
+        return self::IMMUTABLE_COLUMNS;
+    }
+
     public function documentType(): DocumentType
     {
         return $this->type;
+    }
+
+    /**
+     * The tenant this document belongs to, or null when the package runs
+     * single-tenant ({@see Tenancy}).
+     */
+    public function tenantKey(): int|string|null
+    {
+        return Tenancy::of($this);
     }
 
     public function documentStatus(): DocumentStatus
@@ -195,6 +218,8 @@ class Document extends Model implements InvoiceDocument
     protected static function booted(): void
     {
         static::updating(static function (self $document): void {
+            Tenancy::guardAgainstTenantChange($document);
+
             if ($document->getOriginal('finalized_at') === null) {
                 return; // still a draft (or being finalized now): editing is allowed
             }
@@ -236,6 +261,7 @@ class Document extends Model implements InvoiceDocument
         return [
             'type' => DocumentType::class,
             'status' => DocumentStatus::class,
+            'source_document_id' => KeyType::configured()->cast(),
             'year' => 'integer',
             'sequence' => 'integer',
             'line_net_total' => 'integer',

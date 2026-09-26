@@ -19,24 +19,26 @@ use JohnWink\GobdInvoice\ValueObjects\DocumentNumber;
  * {@see ResolvesSequenceKeyAndFormat} — override those (not this method) to
  * customize scoping or formatting.
  *
- * NOTE: `lockForUpdate()` emits a real row lock on MySQL/MariaDB and PostgreSQL;
- * on SQLite it is a no-op clause but whole-database write serialization keeps the
- * result correct. Prove the guarantee on MySQL/Postgres in CI, not only on the
- * in-memory SQLite suite. See docs/research/08-package-architecture.md (B8).
+ * `lockForUpdate()` emits a real row lock (SELECT … FOR UPDATE) on PostgreSQL
+ * and MySQL/MariaDB; on SQLite it is a no-op clause and whole-database write
+ * serialization keeps the result correct. The guarantee is proven against
+ * PostgreSQL with parallel OS processes (tests/Feature/ConcurrentNumberingTest).
  */
 trait LocksAndIncrementsSequence
 {
     use ResolvesSequenceKeyAndFormat;
 
-    public function next(DocumentType $documentType, string $series, int $year): DocumentNumber
+    public function next(DocumentType $documentType, string $series, int $year, int|string|null $tenant = null): DocumentNumber
     {
         /** @var class-string<NumberSequence> $model */
         $model = config('gobd-invoice.models.sequence', NumberSequence::class);
 
-        $keys = $this->sequenceKeys($documentType, $series, $year);
-        $format = $this->formatFor($documentType, $series, $year);
+        $keys = $this->sequenceKeys($documentType, $series, $year, $tenant);
+        $format = $this->formatFor($documentType, $series, $year, $tenant);
 
-        // Ensure the counter row exists before locking it.
+        // Ensure the counter row exists before locking it. A concurrent first
+        // insert loses on the unique index and reads the winner's row instead
+        // (createOrFirst runs the insert in a savepoint inside a transaction).
         $model::query()->firstOrCreate($keys, ['current_value' => 0]);
 
         return DB::transaction(function () use ($model, $keys, $documentType, $series, $year, $format): DocumentNumber {

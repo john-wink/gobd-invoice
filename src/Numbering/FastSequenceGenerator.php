@@ -29,13 +29,13 @@ final class FastSequenceGenerator implements NumberSequenceGenerator
 {
     use ResolvesSequenceKeyAndFormat;
 
-    public function next(DocumentType $documentType, string $series, int $year): DocumentNumber
+    public function next(DocumentType $documentType, string $series, int $year, int|string|null $tenant = null): DocumentNumber
     {
         /** @var class-string<NumberSequence> $model */
         $model = config('gobd-invoice.models.sequence', NumberSequence::class);
 
-        $keys = $this->sequenceKeys($documentType, $series, $year);
-        $format = $this->formatFor($documentType, $series, $year);
+        $keys = $this->sequenceKeys($documentType, $series, $year, $tenant);
+        $format = $this->formatFor($documentType, $series, $year, $tenant);
 
         // Ensure the counter row exists before incrementing it.
         $model::query()->firstOrCreate($keys, ['current_value' => 0]);
