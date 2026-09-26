@@ -4,12 +4,14 @@ on:
   push:
     paths:
       - "**.php"
+      - "**.php.stub"
       - ".github/workflows/run-tests.yml"
       - "phpunit.xml.dist"
       - "composer.json"
   pull_request:
     paths:
       - "**.php"
+      - "**.php.stub"
       - ".github/workflows/run-tests.yml"
       - "phpunit.xml.dist"
       - "composer.json"
@@ -58,4 +60,51 @@ jobs:
         run: composer show -D
 
       - name: Execute tests
+        run: vendor/bin/pest --ci
+
+  # The same suite against a real PostgreSQL server: the only place where the
+  # row locks of the numbering and the database guard triggers take effect.
+  # It runs the parallel-process concurrency tests (tests/Feature/Concurrent*,
+  # tests/Tenancy/Concurrent*) that SQLite has to skip.
+  test-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: P8.5 - L13.* - PostgreSQL 18
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: gobd_invoice_test
+          POSTGRES_USER: gobd
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U gobd"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      GOBD_TEST_DB_DRIVER: pgsql
+      GOBD_TEST_DB_HOST: 127.0.0.1
+      GOBD_TEST_DB_PORT: 5432
+      GOBD_TEST_DB_DATABASE: gobd_invoice_test
+      GOBD_TEST_DB_USERNAME: gobd
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, posix, pdo, pgsql, pdo_pgsql, bcmath, intl, fileinfo, simplexml
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:13.*" "orchestra/testbench:11.*" --no-interaction --no-update
+          composer update --prefer-stable --prefer-dist --no-interaction
+
+      - name: Execute tests against PostgreSQL
         run: vendor/bin/pest --ci

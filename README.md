@@ -201,6 +201,32 @@ and `DocumentCancelled` events to hook into. Configuration lives in
 `config/gobd-invoice.php` (tax, dunning, numbering, einvoice, pdf, datev,
 retention, audit, iks) — each section is documented inline.
 
+## PostgreSQL, multi-tenancy and UUID keys
+
+Decide these two settings **before the first migration** — the migrations read
+them:
+
+```php
+// config/gobd-invoice.php
+'database' => ['key_type' => 'uuid'],   // bigint (default) | uuid (UUIDv7)
+'tenancy'  => ['column' => 'team_id'],  // null (single tenant, default) | a column
+```
+
+With a tenancy column every package table carries it, each tenant runs its own
+counters, and the database enforces `UNIQUE(team_id, number)`. Pass the tenant
+when drafting — from your own tenant context, never from request input:
+
+```php
+GobdInvoice::draft(DocumentType::Rechnung, ['team_id' => $team->id, /* … */], $lines);
+```
+
+On PostgreSQL the migrations also install guard triggers, so Festschreibung holds
+below Eloquent: raw updates of a finalized document's §14 content, changes to its
+lines, audit-log edits, counters running backwards and TRUNCATE are refused by the
+database. The gapless numbering is proven there with parallel OS processes (see
+`tests/Feature/ConcurrentNumberingTest.php`); run the suite against PostgreSQL with
+`GOBD_TEST_DB_DRIVER=pgsql` and the `GOBD_TEST_DB_*` connection variables.
+
 ## Quality gates
 
 ```bash

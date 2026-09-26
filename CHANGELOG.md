@@ -10,10 +10,45 @@ Pre-1.0: the public API may still change between minor versions.
 
 ### Added
 
+- **PostgreSQL is a proven target (0.2.0-rc.1).** The whole suite runs against
+  PostgreSQL 18 in a second CI job. Parallel-process concurrency tests fork 24 OS
+  processes that festschreiben at the same instant — one counter, and two
+  tenants side by side, each repeated 10 times — and assert a gapless,
+  duplicate-free sequence. The gapless generator's row lock is proven: removing
+  `lockForUpdate()` makes the test fail on every run.
+- **Multi-tenancy (`gobd-invoice.tenancy.column`).** Set to a column such as
+  `team_id`, every package table carries it (NOT NULL), each tenant runs its own
+  counters and a number is unique per tenant — **`UNIQUE(team_id, number)`** in
+  the database instead of a mandatory tenant prefix in the format. `draft()`
+  needs the tenant in its attributes; Storno, conversion and Mahnung inherit it,
+  lines and audit entries are stamped with it, a row never changes its tenant,
+  and an advance of another tenant can never be deducted.
+- **UUID keys (`gobd-invoice.database.key_type = uuid`).** All package tables,
+  the document references and the `documentable` morph can be keyed by UUIDv7.
+- **PostgreSQL guard triggers.** On PostgreSQL the migrations install triggers
+  that enforce Festschreibung below the model layer: a finalized tax-relevant
+  document keeps its §14 content, cannot be deleted or returned to draft; its
+  lines cannot be added, changed or removed; the audit log is append-only; a
+  number counter never runs backwards and is never deleted; TRUNCATE is refused;
+  and with tenancy no row changes its tenant and a line always belongs to its
+  document's tenant.
+- **Host line attributes.** `DocumentLine::passthroughAttributes()` names
+  host-owned line columns (e.g. a catalogue reference or `price_snapshot_at`)
+  that `draft()` stores and `convert()`/`cancel()` carry forward.
 - **`GobdInvoice::updateDraft($document, $attributes, $lines)`** — edit an
   unfinalized draft in place: re-applies the draft attributes and replaces its
   line items. Throws for a finalized document (Unveränderbarkeit). Lets a host
   UI offer an edit mode for drafts before Festschreibung.
+
+### Changed (breaking for 0.1 installations)
+
+- `NumberSequenceGenerator::next()` takes the tenant as a fourth parameter, and
+  the overridable `sequenceKeys()` / `formatFor()` receive it too.
+- The migrations use `jsonb` and `timestamptz` (`timestampsTz`) and key the
+  unique number index by tenant when tenancy is enabled. Existing 0.1 tables are
+  not migrated by the package; a 0.1 host upgrades its own schema.
+- The models are `#[Unguarded]` instead of `$guarded = []` (same behaviour, also
+  for host subclasses).
 
 ### Fixed
 

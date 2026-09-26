@@ -121,8 +121,10 @@ composer qa            # lint + rector:check + analyse + test:parallel
 composer test:parallel
 ```
 
-> The numbering concurrency guarantee (`lockForUpdate`) is a no-op on SQLite and
-> must be proven against **MySQL/Postgres** in CI before relying on it.
+> The numbering concurrency guarantee (`lockForUpdate`) is a no-op on SQLite. It
+> is proven against **PostgreSQL** in the `test-postgres` CI job with parallel OS
+> processes (`tests/Feature/ConcurrentNumberingTest.php`). Run the suite there
+> locally with `GOBD_TEST_DB_DRIVER=pgsql` plus the `GOBD_TEST_DB_*` variables.
 
 ## How to pick up the next milestone
 
