@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Contracts\TaxableLine;
 use JohnWink\GobdInvoice\Database\Tenancy;
@@ -37,8 +37,8 @@ use Override;
  * @property string $tax_rate
  * @property string $tax_category
  * @property string $currency
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
+ * @property CarbonInterface|null $created_at
+ * @property CarbonInterface|null $updated_at
  */
 #[Unguarded]
 class DocumentLine extends Model implements TaxableLine

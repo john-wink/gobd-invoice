@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice;
 
+use Carbon\CarbonInterface;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -304,7 +304,7 @@ final readonly class GobdInvoiceManager
      * is NOT §14 content, so it may change after Festschreibung; the §14 columns
      * stay frozen. The payment is written to the audit trail.
      */
-    public function recordPayment(Document $document, int $amountMinor, ?Carbon $paidAt = null): Document
+    public function recordPayment(Document $document, int $amountMinor, ?CarbonInterface $paidAt = null): Document
     {
         throw_if($document->finalized_at === null, GobdInvoiceException::class, "Only a finalized document can receive a payment; [{$document->number}] is not finalized.");
         throw_if($amountMinor <= 0, GobdInvoiceException::class, 'A payment amount must be positive.');
@@ -987,9 +987,9 @@ final readonly class GobdInvoiceManager
     }
 
     /**
-     * @return array{0: string, 1: Carbon}
+     * @return array{0: string, 1: CarbonInterface}
      */
-    private function retentionFor(Document $document, Carbon $issuedAt): array
+    private function retentionFor(Document $document, CarbonInterface $issuedAt): array
     {
         $financial = $document->is_financial_sector
             || Config::boolean('gobd-invoice.retention.financial_sector', false);
@@ -1311,7 +1311,7 @@ final readonly class GobdInvoiceManager
         return $model;
     }
 
-    private function parseDate(mixed $value): ?Carbon
+    private function parseDate(mixed $value): ?CarbonInterface
     {
         if ($value === null) {
             return null;

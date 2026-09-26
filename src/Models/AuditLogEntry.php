@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Enums\KeyType;
 use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
@@ -27,7 +27,7 @@ use Override;
  * @property array<string, mixed>|null $context
  * @property string|null $content_hash
  * @property string|null $previous_hash
- * @property Carbon|null $created_at
+ * @property CarbonInterface|null $created_at
  */
 #[Unguarded]
 class AuditLogEntry extends Model

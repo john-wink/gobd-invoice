@@ -61,6 +61,13 @@ Pre-1.0: the public API may still change between minor versions.
   infers `<subclass>_id` from the parent class name), and `source()` links to
   `static::class` — so a host subclass (e.g. a multi-tenant `Document`) keeps the
   package's schema. This is required for the advertised swappable-models pattern.
+- **Hosts with immutable dates (0.2.0-rc.3).** A host that sets
+  `Date::use(CarbonImmutable::class)` could neither draft a document with a date
+  nor finalize one: `parseDate()` and the retention window were typed to the
+  mutable `Illuminate\Support\Carbon` and threw a `TypeError`, and the virtual
+  `due_date` silently returned `null`. Dates are now typed as `CarbonInterface`
+  throughout (`recordPayment()` accepts any Carbon instance), so the host's
+  date class is used as it is.
 
 ## [0.1.0] - 2026-07-11
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Attributes\UseFactory;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -13,7 +14,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Database\Factories\DocumentFactory;
@@ -60,22 +60,22 @@ use Override;
  * @property array<int, array<string, mixed>>|null $advance_deductions
  * @property array<string, mixed>|null $seller
  * @property array<string, mixed>|null $buyer
- * @property Carbon|null $issue_date
- * @property Carbon|null $service_date
- * @property Carbon|null $service_period_start
- * @property Carbon|null $service_period_end
- * @property Carbon|null $finalized_at
+ * @property CarbonInterface|null $issue_date
+ * @property CarbonInterface|null $service_date
+ * @property CarbonInterface|null $service_period_start
+ * @property CarbonInterface|null $service_period_end
+ * @property CarbonInterface|null $finalized_at
  * @property string|null $content_hash
  * @property array<string, mixed>|null $finalized_payload
  * @property int|string|null $source_document_id
  * @property string|null $documentable_type
  * @property int|string|null $documentable_id
  * @property string $retention_class
- * @property Carbon|null $retention_until
+ * @property CarbonInterface|null $retention_until
  * @property bool $is_financial_sector
  * @property array<string, mixed>|null $meta
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
+ * @property CarbonInterface|null $created_at
+ * @property CarbonInterface|null $updated_at
  * @property-read Collection<int, DocumentLine> $lines
  */
 #[UseFactory(DocumentFactory::class)]
@@ -147,12 +147,12 @@ class Document extends Model implements InvoiceDocument
      * The payment due date (virtual): the issue date plus the payment-terms net
      * days, falling back to the issue date when no term is set.
      *
-     * @return Attribute<Carbon|null, never>
+     * @return Attribute<CarbonInterface|null, never>
      */
     protected function dueDate(): Attribute
     {
-        return Attribute::get(function (): ?Carbon {
-            if (! $this->issue_date instanceof Carbon) {
+        return Attribute::get(function (): ?CarbonInterface {
+            if (! $this->issue_date instanceof CarbonInterface) {
                 return null;
             }
 

@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Models\Concerns\HasConfiguredKey;
 use Override;
@@ -21,8 +21,8 @@ use Override;
  * @property string $series
  * @property int $year
  * @property int $current_value
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
+ * @property CarbonInterface|null $created_at
+ * @property CarbonInterface|null $updated_at
  */
 #[Unguarded]
 class NumberSequence extends Model
