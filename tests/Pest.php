@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
@@ -11,9 +13,11 @@ use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Facades\GobdInvoice;
 use JohnWink\GobdInvoice\GobdInvoiceManager;
 use JohnWink\GobdInvoice\Models\Document;
+use JohnWink\GobdInvoice\Tests\TenantTestCase;
 use JohnWink\GobdInvoice\Tests\TestCase;
 
 pest()->extend(TestCase::class)->in('Feature');
+pest()->extend(TenantTestCase::class)->in('Tenancy');
 
 /**
  * A minimal single-line payload for drafting an invoice in tests.
@@ -78,4 +82,47 @@ function restoreRealAuditLogger(): void
     app()->forgetInstance(GobdInvoiceManager::class);
     GobdInvoice::clearResolvedInstance(GobdInvoiceManager::class);
     app()->bind(AuditLogger::class, AppendOnlyAuditLogger::class);
+}
+
+/**
+ * A fresh tenant key, shaped like the team ids of a UUID host.
+ */
+function newTenant(): string
+{
+    return (string) Str::uuid7();
+}
+
+/**
+ * Draft a document for the given tenant in the multi-tenant configuration.
+ *
+ * @param  array<string, mixed>  $attributes
+ * @param  array<int, array<string, mixed>>|null  $lines
+ */
+function tenantDraft(string $tenant, DocumentType $documentType = DocumentType::Rechnung, array $attributes = [], ?array $lines = null): Document
+{
+    return GobdInvoice::draft($documentType, [TenantTestCase::TENANT_COLUMN => $tenant, ...$attributes], $lines ?? lineSet());
+}
+
+/**
+ * Simulate an operator with direct database access who deliberately bypasses
+ * the PostgreSQL guard triggers (superuser: session_replication_role). Used to
+ * prove that verify() still detects tampering the guards could not prevent.
+ *
+ * @param  Closure(): void  $tampering
+ */
+function tamperBypassingDatabaseGuards(Closure $tampering): void
+{
+    if (! TestCase::usesPostgres()) {
+        $tampering();
+
+        return;
+    }
+
+    DB::statement('SET session_replication_role = replica');
+
+    try {
+        $tampering();
+    } finally {
+        DB::statement('SET session_replication_role = DEFAULT');
+    }
 }

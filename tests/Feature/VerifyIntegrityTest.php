@@ -22,9 +22,11 @@ it('detects line tampering performed directly at the database level (bypassing t
     $document = integrityInvoice();
     expect(GobdInvoice::verify($document))->toBeTrue();
 
-    DB::table('gobd_document_lines')
-        ->where('document_id', $document->id)
-        ->update(['line_net_minor' => 999_999]);
+    tamperBypassingDatabaseGuards(static function () use ($document): void {
+        DB::table('gobd_document_lines')
+            ->where('document_id', $document->id)
+            ->update(['line_net_minor' => 999_999]);
+    });
 
     expect(GobdInvoice::verify($document->fresh()))->toBeFalse();
 });
@@ -33,9 +35,11 @@ it('detects audit-chain tampering', function (): void {
     $document = integrityInvoice();
     expect(GobdInvoice::verify($document))->toBeTrue();
 
-    DB::table('gobd_audit_log')
-        ->where('document_id', $document->id)
-        ->update(['event' => 'tampered']);
+    tamperBypassingDatabaseGuards(static function () use ($document): void {
+        DB::table('gobd_audit_log')
+            ->where('document_id', $document->id)
+            ->update(['event' => 'tampered']);
+    });
 
     expect(GobdInvoice::verify($document->fresh()))->toBeFalse();
 });
