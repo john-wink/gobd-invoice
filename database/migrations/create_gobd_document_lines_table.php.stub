@@ -4,15 +4,23 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Schema;
+use JohnWink\GobdInvoice\Database\PostgresGuards;
+use JohnWink\GobdInvoice\Database\Tenancy;
+use JohnWink\GobdInvoice\Enums\KeyType;
 
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create(config('gobd-invoice.table_names.lines', 'gobd_document_lines'), function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('document_id')->index();
+        $name = Config::string('gobd-invoice.table_names.lines', 'gobd_document_lines');
+        $keyType = KeyType::configured();
+
+        Schema::create($name, function (Blueprint $table) use ($keyType): void {
+            $keyType->primaryKey($table);
+            Tenancy::addColumn($table);
+            $keyType->referenceColumn($table, 'document_id')->index();
             $table->unsignedInteger('position')->default(1);
             $table->text('description');
 
@@ -23,19 +31,24 @@ return new class extends Migration
             $table->bigInteger('unit_price_minor')->default(0);
             $table->string('price_mode')->default('net'); // net | gross (Netto-/Bruttopreis)
             $table->bigInteger('discount_minor')->default(0);
-            $table->json('line_adjustments')->nullable();  // line-level allowances/charges
+            $table->jsonb('line_adjustments')->nullable();  // line-level allowances/charges
             $table->bigInteger('line_net_minor')->default(0);
 
             $table->string('tax_rate')->default('19.0');   // BT-119 percentage
             $table->string('tax_category', 4)->default('S'); // BT-118 UNCL5305 code
             $table->string('currency', 3)->default('EUR');
 
-            $table->timestamps();
+            $table->timestampsTz();
         });
+
+        PostgresGuards::protectLines($name, Config::string('gobd-invoice.table_names.documents', 'gobd_documents'));
     }
 
     public function down(): void
     {
-        Schema::dropIfExists(config('gobd-invoice.table_names.lines', 'gobd_document_lines'));
+        $name = Config::string('gobd-invoice.table_names.lines', 'gobd_document_lines');
+
+        PostgresGuards::release($name);
+        Schema::dropIfExists($name);
     }
 };
