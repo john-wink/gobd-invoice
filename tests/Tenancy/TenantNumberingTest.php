@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\MassAssignmentException;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -10,6 +12,7 @@ use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
 use JohnWink\GobdInvoice\Facades\GobdInvoice;
 use JohnWink\GobdInvoice\Models\AuditLogEntry;
 use JohnWink\GobdInvoice\Models\Document;
+use JohnWink\GobdInvoice\Models\DocumentLine;
 use JohnWink\GobdInvoice\Models\NumberSequence;
 use JohnWink\GobdInvoice\Numbering\FastSequenceGenerator;
 use JohnWink\GobdInvoice\Numbering\LockingSequenceGenerator;
@@ -123,6 +126,55 @@ it('keys every table by UUIDv7', function (): void {
         ->and(Str::isUuid((string) AuditLogEntry::query()->where('document_id', $document->id)->value('id')))->toBeTrue()
         ->and(Str::isUuid((string) NumberSequence::query()->value('id')))->toBeTrue()
         ->and(Document::query()->find($document->id)?->is($document))->toBeTrue();
+});
+
+final class GuardedTenantDocument extends Document
+{
+    /** @var list<string> */
+    protected $guarded = ['team_id'];
+}
+
+final class GuardedTenantLine extends DocumentLine
+{
+    /** @var list<string> */
+    protected $guarded = ['team_id'];
+}
+
+final class GuardedTenantSequence extends NumberSequence
+{
+    /** @var list<string> */
+    protected $guarded = ['team_id'];
+}
+
+final class GuardedTenantAuditEntry extends AuditLogEntry
+{
+    /** @var list<string> */
+    protected $guarded = ['team_id'];
+}
+
+it('works with host models that keep the tenant column out of mass assignment', function (): void {
+    Model::preventSilentlyDiscardingAttributes();
+    config()->set('gobd-invoice.models', [
+        'document' => GuardedTenantDocument::class,
+        'document_line' => GuardedTenantLine::class,
+        'sequence' => GuardedTenantSequence::class,
+        'audit_entry' => GuardedTenantAuditEntry::class,
+    ]);
+
+    try {
+        $team = newTenant();
+        $invoice = GobdInvoice::finalize(tenantDraft($team));
+        $storno = GobdInvoice::cancel($invoice, 'Kunde hat storniert');
+
+        expect($invoice)->toBeInstanceOf(GuardedTenantDocument::class)
+            ->and($invoice->lines->sole()->team_id)->toBe($team)
+            ->and(GuardedTenantSequence::query()->where('team_id', $team)->count())->toBe(2)
+            ->and($storno->team_id)->toBe($team)
+            ->and(fn () => GuardedTenantLine::query()->create(['team_id' => $team, 'document_id' => $invoice->id, 'description' => 'x']))
+            ->toThrow(MassAssignmentException::class);
+    } finally {
+        Model::preventSilentlyDiscardingAttributes(false);
+    }
 });
 
 it('links a UUID host model as documentable', function (): void {
