@@ -32,6 +32,10 @@ Pre-1.0: the public API may still change between minor versions.
   number counter never runs backwards and is never deleted; TRUNCATE is refused;
   and with tenancy no row changes its tenant and a line always belongs to its
   document's tenant.
+- **Guarded tenant columns (0.2.0-rc.2).** The package never mass-assigns the
+  tenant column; it sets it on lines, counters and audit entries itself. A host
+  subclass can therefore keep `team_id` out of mass assignment
+  (`$guarded = ['team_id']`), even under `preventSilentlyDiscardingAttributes`.
 - **Host line attributes.** `DocumentLine::passthroughAttributes()` names
   host-owned line columns (e.g. a catalogue reference or `price_snapshot_at`)
   that `draft()` stores and `convert()`/`cancel()` carry forward.

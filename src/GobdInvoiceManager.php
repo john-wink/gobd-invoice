@@ -1260,11 +1260,17 @@ final readonly class GobdInvoiceManager
         $tenant = $this->tenantAttributesOf($document);
 
         foreach (array_values($lines) as $index => $line) {
-            $document->lines()->create([
+            $documentLine = $document->lines()->make([
                 ...$this->passthroughValues($line),
                 ...$this->buildLineAttributes($index + 1, $line, $currency),
-                ...$tenant,
             ]);
+
+            // Set, never mass-assigned: a host may keep its tenant column guarded.
+            foreach ($tenant as $column => $value) {
+                $documentLine->setAttribute($column, $value);
+            }
+
+            $documentLine->save();
         }
     }
 

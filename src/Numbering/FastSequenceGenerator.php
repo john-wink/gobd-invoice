@@ -38,7 +38,7 @@ final class FastSequenceGenerator implements NumberSequenceGenerator
         $format = $this->formatFor($documentType, $series, $year, $tenant);
 
         // Ensure the counter row exists before incrementing it.
-        $model::query()->firstOrCreate($keys, ['current_value' => 0]);
+        $this->ensureCounterExists($model, $keys);
 
         return DB::transaction(function () use ($model, $keys, $documentType, $series, $year, $format): DocumentNumber {
             // The atomic UPDATE locks the row; reading it back within the same

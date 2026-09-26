@@ -39,7 +39,7 @@ trait LocksAndIncrementsSequence
         // Ensure the counter row exists before locking it. A concurrent first
         // insert loses on the unique index and reads the winner's row instead
         // (createOrFirst runs the insert in a savepoint inside a transaction).
-        $model::query()->firstOrCreate($keys, ['current_value' => 0]);
+        $this->ensureCounterExists($model, $keys);
 
         return DB::transaction(function () use ($model, $keys, $documentType, $series, $year, $format): DocumentNumber {
             $sequence = $model::query()

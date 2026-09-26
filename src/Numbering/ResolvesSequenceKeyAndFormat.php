@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Numbering;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Database\Tenancy;
 use JohnWink\GobdInvoice\Enums\DocumentType;
+use JohnWink\GobdInvoice\Models\NumberSequence;
 
 /**
  * Shared, overridable resolution of the two host-customizable inputs to number
@@ -33,6 +35,19 @@ trait ResolvesSequenceKeyAndFormat
             'series' => $series,
             'year' => $year,
         ];
+    }
+
+    /**
+     * Create the counter row idempotently. The key may carry the tenant column,
+     * which a host keeps guarded against mass assignment; the package writes it
+     * itself here, from the tenant of the document being numbered.
+     *
+     * @param  class-string<NumberSequence>  $model
+     * @param  array<string, int|string>  $keys
+     */
+    protected function ensureCounterExists(string $model, array $keys): void
+    {
+        Model::unguarded(static fn (): NumberSequence => $model::query()->firstOrCreate($keys, ['current_value' => 0]));
     }
 
     /**
