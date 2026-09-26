@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Tests;
 
+use Illuminate\Support\Facades\DB;
 use JohnWink\GobdInvoice\GobdInvoiceServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 
@@ -74,6 +75,12 @@ abstract class TestCase extends Orchestra
     {
         if (self::usesPostgres()) {
             $this->dropPackageTables();
+
+            // Every test boots a fresh application; without this its server
+            // connection would stay open until the server runs out of slots.
+            $this->beforeApplicationDestroyed(static function (): void {
+                DB::disconnect();
+            });
         }
 
         foreach (self::MIGRATIONS as $migration) {
