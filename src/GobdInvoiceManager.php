@@ -681,8 +681,6 @@ final readonly class GobdInvoiceManager
             throw InvalidStatusTransitionException::between($document->status, DocumentStatus::Finalized);
         }
 
-        $document->loadMissing('lines');
-
         $issuedAt = $document->issue_date ?? $this->now();
         $series = (string) ($document->series ?? $document->type->defaultSeries());
 
@@ -701,6 +699,9 @@ final readonly class GobdInvoiceManager
         // finalized document. Keep this transaction tight: slow work (PDF /
         // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
         DB::transaction(function () use ($document, $issuedAt, $series, $number, $tenant): void {
+            $this->lockDraftForFinalize($document);
+            $document->load('lines');
+
             $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
             $this->applyTotals($document, $documentTotals);
 
@@ -760,6 +761,26 @@ final readonly class GobdInvoiceManager
         $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
 
         $document->setRawAttributes($current->getAttributes(), true);
+    }
+
+    /**
+     * Lock the draft's row before its lines are read, so a line written by
+     * another connection either lands before the read or waits for the
+     * Festschreibung and is refused by the line guard — never between the
+     * snapshot and the commit. Re-checks under the lock that the row is still
+     * a draft and re-reads it; changes on the instance that are not saved yet
+     * are kept and saved with the Festschreibung.
+     */
+    private function lockDraftForFinalize(Document $document): void
+    {
+        $unsaved = $document->getDirty();
+
+        $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
+
+        throw_if($current->documentStatus() !== DocumentStatus::Draft, InvalidStatusTransitionException::between($current->status, DocumentStatus::Finalized));
+
+        $document->setRawAttributes($current->getAttributes(), true);
+        $document->setRawAttributes([...$current->getAttributes(), ...$unsaved]);
     }
 
     /**
