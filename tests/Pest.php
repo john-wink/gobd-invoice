@@ -177,6 +177,7 @@ function underTenantRowSecurity(string $role, Closure $work): mixed
     DB::statement('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gobd_tenant_app');
     DB::statement('ALTER TABLE gobd_documents ENABLE ROW LEVEL SECURITY');
     DB::statement('ALTER TABLE gobd_documents FORCE ROW LEVEL SECURITY');
+    DB::statement('DROP POLICY IF EXISTS gobd_documents_of_tenant ON gobd_documents');
     DB::statement(<<<'SQL'
         CREATE POLICY gobd_documents_of_tenant ON gobd_documents
             USING (team_id::text = current_setting('gobd.tenant', true))
