@@ -41,13 +41,30 @@ function invoiceWithBelegnachlass(array $adjustment, ?array $lines = null): Docu
     ]));
 }
 
+/**
+ * The adjustments with the keys of each in sorted order, as the content hash
+ * reads them: finalize() re-reads the document, and PostgreSQL keeps jsonb
+ * without the key order of the draft.
+ *
+ * @param  array<int, array<string, mixed>>|null  $adjustments
+ * @return array<int, array<string, mixed>>
+ */
+function adjustmentsByKey(?array $adjustments): array
+{
+    return array_map(static function (array $adjustment): array {
+        ksort($adjustment);
+
+        return $adjustment;
+    }, $adjustments ?? []);
+}
+
 it('splits a Belegnachlass onto the rates of the lines', function (): void {
     $invoice = invoiceWithBelegnachlass(['type' => 'allowance', 'amount_minor' => 15000, 'reason' => 'Treuerabatt', 'split_by_rate' => true]);
 
-    expect($invoice->document_adjustments)->toBe([
+    expect(adjustmentsByKey($invoice->document_adjustments))->toBe(adjustmentsByKey([
         ['type' => 'allowance', 'amount_minor' => 10000, 'percentage' => null, 'base_minor' => null, 'tax_rate' => '19.0', 'tax_category' => 'S', 'reason' => 'Treuerabatt'],
         ['type' => 'allowance', 'amount_minor' => 5000, 'percentage' => null, 'base_minor' => null, 'tax_rate' => '7.0', 'tax_category' => 'S', 'reason' => 'Treuerabatt'],
-    ])
+    ]))
         ->and($invoice->allowance_total)->toBe(15000)
         ->and($invoice->net_total)->toBe(135000)
         ->and($invoice->vat_total)->toBe(20250)
