@@ -727,11 +727,16 @@ final readonly class GobdInvoiceManager
     /**
      * Lock the document's row for the rest of the transaction and load its
      * current state into the given instance, so a decision never rests on a
-     * stale copy.
+     * stale copy. The re-read would overwrite unsaved changes on the
+     * instance, so an instance that carries any is refused instead.
      */
     private function lockAndRefresh(Document $document): void
     {
-        $current =$document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
+        $unsaved = array_keys($document->getDirty());
+
+        throw_if($unsaved !== [], GobdInvoiceException::class, "Document [{$document->number}] has unsaved changes to [".implode(', ', $unsaved).']; save or discard them first.');
+
+        $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
 
         $document->setRawAttributes($current->getAttributes(), true);
     }
