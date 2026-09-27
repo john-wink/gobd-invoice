@@ -8,6 +8,124 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.2.1] - Unreleased (0.2.1-rc.1: 2026-09-27)
+
+Closes the gaps a host found while building invoices on 0.2.0: a document
+type for the kaufmännische Gutschrift, overdue without sending, advances in
+payments, a Belegnachlass over several rates and a seller known only by its
+Steuernummer.
+
+### Added
+
+- **`DocumentType::Rechnungskorrektur`** (`rechnungskorrektur`): the
+  kaufmännische Gutschrift — a price reduction, refund or bonus the supplier
+  grants on its own festgeschriebene invoice. It is its own type, apart from
+  the Storno (full reversal) and the Gutschrift (self-billing, 389), with its
+  own number series (`rechnungskorrektur`). Draft it with
+  `source_document_id` set to the credited invoice and negative amounts, like
+  a Storno. `finalize()` refuses it (`DocumentContentException`, violation
+  `credited_invoice`) unless it credits a festgeschriebene, uncancelled
+  Rechnung, Abschlags-, Anzahlungs- or Schlussrechnung of its own tenant, and
+  (`credit_amount`) unless its total is negative. The credited invoice keeps
+  its status. Title: „Rechnungskorrektur“ (en: “Invoice correction”); the
+  word „Gutschrift“ stays reserved for self-billing (§ 14 Abs. 2 Satz 2,
+  Abs. 4 Nr. 10 UStG).
+- **E-invoice type codes (BT-3, UNTDID 1001):**
+
+  | Type | Code | BG-3 / BT-25 |
+  |---|---|---|
+  | Storno | 381 Credit note | the cancelled invoice |
+  | Rechnungskorrektur | 381 Credit note | the credited invoice |
+  | Gutschrift (self-billing) | 389 Self-billed invoice | — |
+
+  384 (Corrected invoice) is not used: it replaces an invoice with revised
+  content instead of crediting an amount. `DocumentType::referencesPrecedingInvoice()`
+  and `DocumentType::acceptsRechnungskorrektur()` expose the rules.
+- **Belegnachlass over several rates.** A document-level adjustment with
+  `'split_by_rate' => true` (and no `tax_rate`/`tax_category`) is split onto
+  the (category, rate) groups of the lines: one allowance or charge per
+  group with that group's category and rate. A fixed `amount_minor` is
+  shared in proportion to the group nets, the cents left over by rounding go
+  to the largest remainders, so the parts add up exactly; a `percentage`
+  applies to each group net as its base. `draft()` and `updateDraft()` split
+  against the lines they receive.
+- **Seller identifiers.** `Party` carries `identifier` (BT-29, e.g. the
+  supplier number the buyer assigned) and `legal_registration_id` (BT-30,
+  e.g. the Handelsregisternummer); both are emitted for the seller.
+- `markOverdue()` works from `finalized`: `DocumentStatus::Finalized` may
+  move to `Overdue`.
+
+### Fixed
+
+- **Document-level allowances and charges reach the e-invoice.** The CII
+  serializer did not write BG-20/BG-21, so every document with a
+  Belegnachlass or -zuschlag failed BR-CO-11/BR-CO-12 and the taxable amount
+  of its VAT group (BR-S-08 and siblings). Each adjustment is now emitted
+  with its category, rate, percentage and base; a missing reason falls back
+  to „Nachlass“/„Zuschlag“ (BT-97/BT-104). On a Storno the reversed
+  adjustments keep the direction they have on the cancelled invoice, and
+  BT-107/BT-108 swap accordingly, so the 381 credit note reconciles.
+- **A seller with only a Steuernummer gets a valid e-invoice.** BR-CO-26
+  (EN 16931) asks for a seller identifier (BT-29), a legal registration
+  (BT-30) or a USt-IdNr (BT-31); the Steuernummer in BT-32 (scheme FC) does
+  not count. With none of the three given, the Steuernummer is now emitted
+  as BT-29 as well. The validator is unchanged and still flags a seller
+  without any identifier.
+- **Storno and Rechnungskorrektur reference the credited invoice** (BG-3:
+  BT-25 number, BT-26 issue date) in CII and, through the bridge, in UBL
+  (`BillingReference`).
+- **Payments count the advances of a Schlussrechnung.** `recordPayment()`
+  measured the payment against the gross total. It now uses the amount
+  payable: gross total − deducted advances (net and VAT, § 14 Abs. 5 UStG) +
+  payable rounding — the base `finalize()` computes the amount due from. A
+  Schlussrechnung over 3,570.00 with an advance of 1,190.00 is paid after
+  2,380.00, and a payment of 1,000.00 leaves 1,380.00 due (was: 2,570.00).
+- **`markOverdue()` checks the due date.** It refuses a document whose due
+  date (issue date + `payment_terms.net_days`, else the issue date) is not
+  before today in the package time zone, and a document with no amount due
+  (a Storno, a Rechnungskorrektur, a Schlussrechnung covered by its
+  advances).
+- **The package translations load.** spatie's `hasTranslations()` looks in
+  `resources/lang/`, the files live in `lang/`; every
+  `gobd-invoice::gobd-invoice.*` key resolved to itself — among others the
+  exemption reason (BT-120) of the e-invoice. The provider now registers
+  `lang/` as the `gobd-invoice` namespace.
+
+### Upgrading from 0.2.0
+
+1. **Hosts that issue kaufmännische Gutschriften as `DocumentType::Gutschrift`
+   (389):** draft new ones as `DocumentType::Rechnungskorrektur` with
+   `source_document_id` and negative amounts. 389 declares the document a
+   self-billed invoice the *buyer* issued (§ 14 Abs. 2 Satz 2 UStG); a
+   supplier's own credit is a 381 credit note. Festgeschriebene 389
+   documents stay what they are — type, number, snapshot and hash are not
+   touched, and `verify()` keeps passing. Correct a wrongly typed one only
+   the GoBD way: Storno it and issue a Rechnungskorrektur. The new type
+   numbers in its own series `rechnungskorrektur`; a host that numbered its
+   credits in the `gutschrift` series (e.g. with a prefix „GS“) maps its
+   prefix to the new series, and the `gutschrift` counter stays where it is.
+2. **PostgreSQL:** call `PostgresGuards::protectDocuments('gobd_documents')`
+   and `PostgresGuards::protectLines('gobd_document_lines', 'gobd_documents')`
+   again in a host migration. Both replace their functions (same names and
+   signatures) with the new lists baked in: the status guard now allows
+   `finalized>overdue`, and `rechnungskorrektur` joins the immutable types of
+   the document and line guards. Without it the database refuses
+   `markOverdue()` on a festgeschriebene, unsent invoice, and a
+   festgeschriebene Rechnungskorrektur is guarded only by the model. No new
+   function, trigger, table or column.
+3. **Overdue jobs:** `markOverdue()` may now be called for `finalized`
+   documents too, and refuses documents that are not past due or have
+   nothing to pay — call it only for those, or catch the
+   `GobdInvoiceException`.
+4. **Payments on a Schlussrechnung:** a host that netted the advances out
+   itself before calling `recordPayment()` (or recorded them as payments)
+   stops doing so; pass the amount the customer actually paid.
+5. **Belegnachlass:** a host that spread a document discount onto the lines
+   itself can pass it as one adjustment with `'split_by_rate' => true`.
+6. `Party::toArray()` has two more keys (`identifier`,
+   `legal_registration_id`); new drafts store them in `seller`/`buyer`.
+   Stored documents are not rewritten and keep verifying.
+
 ## [0.2.0] - 2026-09-27
 
 First stable 0.2 release. It contains everything from 0.2.0-rc.1 to
