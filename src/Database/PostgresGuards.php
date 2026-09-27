@@ -22,7 +22,8 @@ use JohnWink\GobdInvoice\Models\Document;
  *   cancelled document keeps its status for good;
  * - a festgeschriebener Storno and the cancelled document it references commit
  *   together, and a Storno without that reference cannot be festgeschrieben;
- * - its lines cannot be added, changed or removed;
+ * - its lines cannot be added, changed or removed, and a line of a document
+ *   the session cannot see (row level security) is treated the same way;
  * - the audit log is append-only;
  * - a number counter only moves forward and is never deleted;
  * - TRUNCATE is refused on all four tables;
@@ -92,6 +93,14 @@ final class PostgresGuards
         self::pairStornoAndOriginal($table, $types);
     }
 
+    /**
+     * A line changes only while its document is a draft (or of a type that
+     * stays editable) and the session can see that document. The document is
+     * read as a requirement, never as a finding: under row level security a
+     * document the session cannot see counts as festgeschrieben, so the guard
+     * fails closed like the Storno guard. A line without a document cannot be
+     * written either.
+     */
     public static function protectLines(string $lines, string $documents): void
     {
         if (! self::applies()) {
@@ -102,6 +111,7 @@ final class PostgresGuards
         $parent = self::identifier($documents);
         $types = self::immutableTypeList();
         $tenant = Tenancy::column();
+        $immutable = 'gobd-invoice: the lines of a finalized document are immutable (GoBD Unveraenderbarkeit); a line changes only while this session can see its document as a draft';
 
         $tenantChecks = $tenant === null ? '' : <<<SQL
             IF TG_OP = 'UPDATE' AND NEW.{$tenant} IS DISTINCT FROM OLD.{$tenant} THEN
@@ -119,18 +129,18 @@ final class PostgresGuards
             BEGIN
                 {$tenantChecks}
 
-                IF TG_OP <> 'INSERT' AND EXISTS (
+                IF TG_OP <> 'INSERT' AND NOT EXISTS (
                     SELECT 1 FROM {$parent} d
-                    WHERE d.id = OLD.document_id AND d.finalized_at IS NOT NULL AND d.type IN ({$types})
+                    WHERE d.id = OLD.document_id AND (d.finalized_at IS NULL OR d.type NOT IN ({$types}))
                 ) THEN
-                    RAISE EXCEPTION 'gobd-invoice: the lines of a finalized document are immutable (GoBD Unveraenderbarkeit)';
+                    RAISE EXCEPTION '{$immutable}';
                 END IF;
 
-                IF TG_OP <> 'DELETE' AND EXISTS (
+                IF TG_OP <> 'DELETE' AND NOT EXISTS (
                     SELECT 1 FROM {$parent} d
-                    WHERE d.id = NEW.document_id AND d.finalized_at IS NOT NULL AND d.type IN ({$types})
+                    WHERE d.id = NEW.document_id AND (d.finalized_at IS NULL OR d.type NOT IN ({$types}))
                 ) THEN
-                    RAISE EXCEPTION 'gobd-invoice: the lines of a finalized document are immutable (GoBD Unveraenderbarkeit)';
+                    RAISE EXCEPTION '{$immutable}';
                 END IF;
 
                 IF TG_OP = 'DELETE' THEN

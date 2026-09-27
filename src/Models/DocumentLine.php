@@ -120,11 +120,20 @@ class DocumentLine extends Model implements TaxableLine
         ];
     }
 
+    /**
+     * The document is read without host scopes, like the Storno checks of
+     * {@see Document}, and a document that still cannot be read (row level
+     * security, or no document at all) counts as finalized.
+     */
     private function guardAgainstImmutableParent(): void
     {
-        $document = $this->document;
+        $document = $this->document()->withoutGlobalScopes()->first();
 
-        if ($document !== null && $document->isImmutable()) {
+        if ($document === null) {
+            throw DocumentIsImmutableException::forUnreadableDocument($this->document_id);
+        }
+
+        if ($document->isImmutable()) {
             throw DocumentIsImmutableException::forFinalizedDocument((string) $document->number);
         }
     }
