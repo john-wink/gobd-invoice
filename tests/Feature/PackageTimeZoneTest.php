@@ -66,6 +66,26 @@ it('falls back to the app time zone without a package time zone', function (): v
         ->and($storno->number)->toBe('ST2026-0001');
 });
 
+it('ships the time zone key empty, so the app time zone applies', function (): void {
+    $shipped = require __DIR__.'/../../config/gobd-invoice.php';
+
+    expect($shipped)->toHaveKey('timezone')
+        ->and($shipped['timezone'])->toBeNull()
+        ->and(config()->has('gobd-invoice.timezone'))->toBeTrue()
+        ->and(config('gobd-invoice.timezone'))->toBeNull();
+});
+
+it('dates by the app time zone with the shipped time zone key', function (): void {
+    config()->set('app.timezone', 'Europe/Berlin');
+    newYearsEveInUtc();
+
+    $invoice = GobdInvoice::finalize(GobdInvoice::draft(DocumentType::Rechnung, ['service_date' => '2026-12-01'], lineSet('100.00')));
+
+    expect(config('gobd-invoice.timezone'))->toBeNull()
+        ->and($invoice->issue_date?->toDateString())->toBe('2027-01-01')
+        ->and($invoice->year)->toBe(2027);
+});
+
 it('dates a finalization without issue date by the day in the package time zone', function (): void {
     config()->set('gobd-invoice.timezone', 'Europe/Berlin');
     newYearsEveInUtc();
