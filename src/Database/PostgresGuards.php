@@ -241,43 +241,49 @@ final class PostgresGuards
      * cancelled, and a festgeschriebenes tax-relevant document is cancelled
      * only by such a Storno. Checked at commit (deferred), so the two rows may
      * be written in either order within one transaction.
+     *
+     * The checked row is the version the trigger hands in (NEW), never a
+     * re-read: under row level security a session whose tenant context is
+     * gone by the commit would not see its own row. Every status, type and
+     * finalization a violation needs arrives as the NEW of some queued event,
+     * because those values are final once festgeschrieben. The partner row is
+     * still read, but only as a requirement that must exist: a row the
+     * session cannot see counts as missing, so the check fails closed. No
+     * SECURITY DEFINER: under FORCE ROW LEVEL SECURITY the table owner sees
+     * no more than the session, and the package cannot hand out BYPASSRLS.
      */
     private static function pairStornoAndOriginal(string $table, string $types): void
     {
         $storno = DocumentType::Storno->value;
         $cancelled = DocumentStatus::Cancelled->value;
         $tenant = Tenancy::column();
-        $sameTenant = $tenant === null ? '' : "AND related.{$tenant} = checked.{$tenant}";
+        $sameTenant = $tenant === null ? '' : "AND related.{$tenant} = NEW.{$tenant}";
 
         DB::statement(<<<SQL
             CREATE OR REPLACE FUNCTION {$table}_storno_guard() RETURNS trigger LANGUAGE plpgsql AS \$guard\$
-            DECLARE
-                checked {$table}%ROWTYPE;
             BEGIN
-                SELECT * INTO checked FROM {$table} WHERE id = NEW.id;
-
-                IF NOT FOUND OR checked.finalized_at IS NULL THEN
+                IF NEW.finalized_at IS NULL THEN
                     RETURN NULL;
                 END IF;
 
-                IF checked.type = '{$storno}' AND NOT EXISTS (
+                IF NEW.type = '{$storno}' AND NOT EXISTS (
                     SELECT 1 FROM {$table} related
-                    WHERE related.id = checked.source_document_id
+                    WHERE related.id = NEW.source_document_id
                         AND related.finalized_at IS NOT NULL
                         AND related.status = '{$cancelled}'
                         {$sameTenant}
                 ) THEN
-                    RAISE EXCEPTION 'gobd-invoice: Storno % must reference a finalized document of its tenant, and that document must be cancelled', checked.number;
+                    RAISE EXCEPTION 'gobd-invoice: Storno % must reference a finalized, cancelled document of its tenant that this session can see', NEW.number;
                 END IF;
 
-                IF checked.status = '{$cancelled}' AND checked.type IN ({$types}) AND NOT EXISTS (
+                IF NEW.status = '{$cancelled}' AND NEW.type IN ({$types}) AND NOT EXISTS (
                     SELECT 1 FROM {$table} related
-                    WHERE related.source_document_id = checked.id
+                    WHERE related.source_document_id = NEW.id
                         AND related.type = '{$storno}'
                         AND related.finalized_at IS NOT NULL
                         {$sameTenant}
                 ) THEN
-                    RAISE EXCEPTION 'gobd-invoice: document % can only be cancelled by a finalized Storno that references it', checked.number;
+                    RAISE EXCEPTION 'gobd-invoice: document % can only be cancelled by a finalized Storno that references it and that this session can see', NEW.number;
                 END IF;
 
                 RETURN NULL;
