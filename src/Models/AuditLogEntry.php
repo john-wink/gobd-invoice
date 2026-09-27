@@ -18,10 +18,12 @@ use Override;
  * An append-only audit-log row. Entries are insert-only: updating or deleting a
  * row is blocked at the model level so the log stays tamper-evident
  * (GoBD Nachvollziehbarkeit). Each entry chains to the previous via
- * `previous_hash`. See docs/research/01-gobd-compliance.md.
+ * `previous_hash`, at the position `sequence` (1, 2, … per document). See
+ * docs/research/01-gobd-compliance.md.
  *
  * @property int|string $id
  * @property int|string|null $document_id
+ * @property int $sequence
  * @property string $event
  * @property string|null $actor
  * @property array<string, mixed>|null $context
@@ -74,6 +76,7 @@ class AuditLogEntry extends Model
     {
         return [
             'document_id' => KeyType::configured()->cast(),
+            'sequence' => 'integer',
             'context' => 'array',
         ];
     }
