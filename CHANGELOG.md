@@ -8,12 +8,45 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
-## [0.2.1] - Unreleased (0.2.1-rc.1, 0.2.1-rc.2: 2026-09-27)
+## [0.2.1] - Unreleased (0.2.1-rc.1, 0.2.1-rc.2, 0.2.1-rc.3: 2026-09-27)
 
 Closes the gaps a host found while building invoices on 0.2.0: a document
 type for the kaufmännische Gutschrift, overdue without sending, advances in
 payments, a Belegnachlass over several rates and a seller known only by its
 Steuernummer.
+
+### Fixed (0.2.1-rc.3)
+
+- **The Festschreibung locks its document before it reads the lines.**
+  `finalize()` read the lines before its transaction and locked the
+  document only with the final `save()`. A Festschreibung that waited for
+  the number counter left the draft unlocked in between: a line changed,
+  added or deleted by another connection in that wait went through, the
+  document was festgeschrieben with the old lines in its snapshot, and
+  `verify()` returned `false`. The `FOR SHARE` of the line guard (rc.2)
+  does not close this window, because nothing held the document yet. The
+  transaction now starts with `SELECT … FOR UPDATE` on the document and
+  reads the lines under that lock with `load()`, not `loadMissing()`, so
+  lines already loaded on the instance are read again. A line write in the
+  wait waits for the Festschreibung and is refused; one that committed
+  before the lock is part of the snapshot. Proven with two connections on
+  PostgreSQL 18 for update, insert and delete while a third holds the
+  counter; against rc.2 all three writes pass after 0.00 s.
+- **A stale copy of a festgeschriebene draft is refused.** Under the lock
+  the document is read again and must still be a draft;
+  `finalize()` on an instance loaded before another Festschreibung throws
+  `InvalidStatusTransitionException` and consumes no number of the gapless
+  counter (before, the document guard refused it on PostgreSQL with a
+  `QueryException`; on SQLite it went through). Changes on the instance that are not
+  saved yet are kept and saved with the Festschreibung, as before.
+
+### Upgrading from 0.2.1-rc.2
+
+No schema change. The Festschreibung now holds the row lock on the
+document before it takes the counter lock. A host transaction that locks a
+counter row and then a draft that is being festgeschrieben can deadlock;
+PostgreSQL aborts one of them. Lock the document first, as `finalize()`
+does.
 
 ### Fixed (0.2.1-rc.2)
 
