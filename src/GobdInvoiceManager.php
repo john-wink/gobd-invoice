@@ -367,7 +367,7 @@ final readonly class GobdInvoiceManager
             $this->auditLogger->append($document, 'payment_recorded', [
                 'amount_minor' => $amountMinor,
                 'paid_total' => $paid,
-                'paid_at' => ($paidAt ?? Date::now())->toDateString(),
+                'paid_at' => ($paidAt ?? $this->now())->toDateString(),
             ]);
         });
 
@@ -530,8 +530,12 @@ final readonly class GobdInvoiceManager
      * Cancel a finalized, tax-relevant document by issuing a linked Storno with
      * negated amounts (Storno statt Löschen). The original is never deleted; it
      * moves to the Cancelled status. Returns the new Storno document.
+     *
+     * The Storno's issue date is `$issueDate` when given, else today in the
+     * package time zone (`gobd-invoice.timezone`); it also picks the year of
+     * the Storno number.
      */
-    public function cancel(Document $document, string $reason): Document
+    public function cancel(Document $document, string $reason, DateTimeInterface|string|null $issueDate = null): Document
     {
         // Atomic Storno: the new Storno's draft+finalization, the original's flip
         // to Cancelled, and the 'cancelled' audit entry commit together. A failure
@@ -544,7 +548,7 @@ final readonly class GobdInvoiceManager
         // payment-reconciliation concern and are deliberately not carried over,
         // so the Storno is a full credit (amount due = −gross) reconciled against
         // any prior payment outside this document.
-        $storno = DB::transaction(function () use ($document, $reason): Document {
+        $storno = DB::transaction(function () use ($document, $reason, $issueDate): Document {
             $this->lockForCancellation($document);
 
             $document->loadMissing('lines');
@@ -568,6 +572,7 @@ final readonly class GobdInvoiceManager
                 ...$this->tenantAttributesOf($document),
                 'currency' => $document->currency,
                 'series' => DocumentType::Storno->defaultSeries(),
+                'issue_date' => $issueDate,
                 'service_date' => $document->service_date,
                 'service_period_start' => $document->service_period_start,
                 'service_period_end' => $document->service_period_end,
@@ -658,7 +663,7 @@ final readonly class GobdInvoiceManager
 
         $document->loadMissing('lines');
 
-        $issuedAt = $document->issue_date ?? Date::now();
+        $issuedAt = $document->issue_date ?? $this->now();
         $series = (string) ($document->series ?? $document->type->defaultSeries());
 
         // A gap-tolerant generator allocates the number up front in its own short
@@ -726,7 +731,7 @@ final readonly class GobdInvoiceManager
      */
     private function lockAndRefresh(Document $document): void
     {
-        $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
+        $current =$document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
 
         $document->setRawAttributes($current->getAttributes(), true);
     }
@@ -1372,6 +1377,17 @@ final readonly class GobdInvoiceManager
         $model = config('gobd-invoice.models.document_line', DocumentLine::class);
 
         return $model;
+    }
+
+    /**
+     * The current moment in the package time zone, so its calendar day is the
+     * host's business day rather than the day of the server clock.
+     */
+    private function now(): CarbonInterface
+    {
+        $timeZone = config('gobd-invoice.timezone');
+
+        return Date::now(is_string($timeZone) && $timeZone !== '' ? $timeZone : Config::string('app.timezone', 'UTC'));
     }
 
     private function parseDate(mixed $value): ?CarbonInterface

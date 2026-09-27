@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JohnWink\GobdInvoice\Facades;
 
 use Carbon\CarbonInterface;
+use DateTimeInterface;
 use Illuminate\Support\Facades\Facade;
 use JohnWink\En16931\ValidationResult;
 use JohnWink\GobdInvoice\Enums\DocumentType;
@@ -29,7 +30,7 @@ use JohnWink\GobdInvoice\ValueObjects\ParsedEInvoice;
  * @method static string exportDatev(iterable<Document> $documents, DatevExportOptions $options)
  * @method static DunningAssessment assessDunning(Money $principal, DunningOptions $options)
  * @method static Document dun(Document $document, DunningOptions $options)
- * @method static Document cancel(Document $document, string $reason)
+ * @method static Document cancel(Document $document, string $reason, DateTimeInterface|string|null $issueDate = null)
  * @method static Document convert(Document $document, DocumentType $target, array<string, mixed> $overrides = [])
  * @method static Document recordPayment(Document $document, int $amountMinor, ?CarbonInterface $paidAt = null)
  * @method static Document markSent(Document $document)
