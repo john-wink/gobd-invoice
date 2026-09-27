@@ -43,7 +43,7 @@ enum DocumentStatus: string
     {
         return match ($this) {
             self::Draft => [self::Finalized, self::Cancelled],
-            self::Finalized => [self::Sent, self::PartiallyPaid, self::Paid, self::Cancelled],
+            self::Finalized => [self::Sent, self::PartiallyPaid, self::Paid, self::Overdue, self::Cancelled],
             self::Sent => [self::PartiallyPaid, self::Paid, self::Overdue, self::Cancelled],
             self::PartiallyPaid => [self::Paid, self::Overdue, self::Cancelled],
             self::Overdue => [self::PartiallyPaid, self::Paid, self::Cancelled],

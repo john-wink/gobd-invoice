@@ -2,13 +2,16 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\DB;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Exceptions\DocumentIsImmutableException;
 use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
+use JohnWink\GobdInvoice\Exceptions\InvalidStatusTransitionException;
 use JohnWink\GobdInvoice\Facades\GobdInvoice;
 use JohnWink\GobdInvoice\Models\AuditLogEntry;
 use JohnWink\GobdInvoice\Models\Document;
+use JohnWink\GobdInvoice\Models\NumberSequence;
 
 function draftInvoice(): Document
 {
@@ -40,6 +43,33 @@ it('finalizes a draft: number, totals, hash, status and verification', function 
         ->and($document->content_hash)->not->toBeNull()
         ->and($document->finalized_at)->not->toBeNull()
         ->and(GobdInvoice::verify($document))->toBeTrue();
+});
+
+it('refuses to festschreiben a stale copy of a draft that is festgeschrieben already', function (): void {
+    $draft = draftInvoice();
+    $stale = Document::query()->findOrFail($draft->id);
+
+    GobdInvoice::finalize($draft);
+
+    expect(fn () => GobdInvoice::finalize($stale))->toThrow(InvalidStatusTransitionException::class, 'Cannot transition document from [finalized] to [finalized].');
+
+    $finalized = Document::query()->findOrFail($draft->id);
+
+    expect($finalized->number)->toBe($draft->number)
+        ->and(NumberSequence::query()->sum('current_value'))->toEqual(1)
+        ->and(GobdInvoice::verify($finalized))->toBeTrue();
+});
+
+it('festschreibt the lines as stored, not the lines already loaded on the instance', function (): void {
+    $draft = draftInvoice();
+    DB::table('gobd_document_lines')->where('document_id', $draft->id)->where('description', 'Leistung A')->update(['description' => 'Leistung A, geändert']);
+
+    GobdInvoice::finalize($draft);
+
+    $finalized = Document::query()->findOrFail($draft->id);
+
+    expect(array_column($finalized->finalized_payload['lines'] ?? [], 'description'))->toBe(['Leistung A, geändert', 'Leistung B'])
+        ->and(GobdInvoice::verify($finalized))->toBeTrue();
 });
 
 it('records an append-only audit entry on finalize', function (): void {

@@ -14,6 +14,7 @@ return [
         'anzahlungsrechnung' => 'Anzahlungsrechnung',
         'schlussrechnung' => 'Schlussrechnung',
         'storno' => 'Stornorechnung',
+        'rechnungskorrektur' => 'Rechnungskorrektur',
         'gutschrift' => 'Gutschrift',
         'mahnung' => 'Mahnung',
     ],
@@ -47,5 +48,7 @@ return [
         'net_total' => 'Nettobetrag',
         'vat' => 'Umsatzsteuer',
         'gross_total' => 'Gesamtbetrag',
+        'allowance' => 'Nachlass',
+        'charge' => 'Zuschlag',
     ],
 ];

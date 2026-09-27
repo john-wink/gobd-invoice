@@ -24,6 +24,7 @@ enum DocumentType: string
     case Anzahlungsrechnung = 'anzahlungsrechnung';
     case Schlussrechnung = 'schlussrechnung';
     case Storno = 'storno';
+    case Rechnungskorrektur = 'rechnungskorrektur';
     case Gutschrift = 'gutschrift';
     case Mahnung = 'mahnung';
 
@@ -52,6 +53,7 @@ enum DocumentType: string
             self::Anzahlungsrechnung,
             self::Schlussrechnung,
             self::Storno,
+            self::Rechnungskorrektur,
             self::Gutschrift => true,
             self::Angebot,
             self::Kostenvoranschlag,
@@ -95,6 +97,7 @@ enum DocumentType: string
             self::Anzahlungsrechnung,
             self::Schlussrechnung,
             self::Storno,
+            self::Rechnungskorrektur,
             self::Gutschrift => true,
             default => false,
         };
@@ -103,9 +106,12 @@ enum DocumentType: string
     /**
      * The EN 16931 invoice type code (BT-3, code list UNCL1001) for the
      * structured e-invoice: 380 commercial invoice, 381 credit note (a Storno
-     * reverses via a full credit), 386 prepayment invoice (Anzahlungsrechnung),
-     * 389 self-billed invoice (Gutschrift, §14 Abs. 2 UStG). Only defined for
-     * types that {@see self::canEmitEInvoice()}.
+     * reverses the whole invoice, a Rechnungskorrektur credits part of it; both
+     * reference the invoice they credit in BT-25), 386 prepayment invoice
+     * (Anzahlungsrechnung), 389 self-billed invoice (Gutschrift, §14 Abs. 2
+     * UStG). 384 (corrected invoice) is not used: it replaces an invoice with
+     * revised content instead of crediting it. Only defined for types that
+     * {@see self::canEmitEInvoice()}.
      */
     public function en16931TypeCode(): string
     {
@@ -113,10 +119,36 @@ enum DocumentType: string
             self::Rechnung,
             self::Abschlagsrechnung,
             self::Schlussrechnung => '380',
-            self::Storno => '381',
+            self::Storno,
+            self::Rechnungskorrektur => '381',
             self::Anzahlungsrechnung => '386',
             self::Gutschrift => '389',
             default => throw new LogicException("Document type {$this->value} has no EN 16931 invoice type code."),
+        };
+    }
+
+    /**
+     * Whether the e-invoice names the invoice it credits (BG-3 / BT-25): the
+     * Storno and the Rechnungskorrektur, both linked by `source_document_id`.
+     */
+    public function referencesPrecedingInvoice(): bool
+    {
+        return $this === self::Storno || $this === self::Rechnungskorrektur;
+    }
+
+    /**
+     * Whether a Rechnungskorrektur (kaufmännische Gutschrift: a price reduction
+     * or refund the supplier grants on its own invoice) may credit a document
+     * of this type.
+     */
+    public function acceptsRechnungskorrektur(): bool
+    {
+        return match ($this) {
+            self::Rechnung,
+            self::Abschlagsrechnung,
+            self::Anzahlungsrechnung,
+            self::Schlussrechnung => true,
+            default => false,
         };
     }
 
@@ -148,7 +180,7 @@ enum DocumentType: string
     /**
      * Whether the literal label "Gutschrift" is reserved for self-billing only
      * (§14 Abs. 2 UStG). A correction of your own invoice must NOT be labelled
-     * Gutschrift — use {@see self::Storno}.
+     * Gutschrift — use {@see self::Storno} or {@see self::Rechnungskorrektur}.
      */
     public function reservesGutschriftLabel(): bool
     {

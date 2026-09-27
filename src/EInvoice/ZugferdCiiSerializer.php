@@ -136,7 +136,9 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
         }
 
         $this->applyParties($zugferdDocumentBuilder, $document);
+        $this->applyPrecedingInvoice($zugferdDocumentBuilder, $document);
         $this->applyLines($zugferdDocumentBuilder, $document);
+        $this->applyDocumentAllowancesCharges($zugferdDocumentBuilder, $document);
         $this->applyTaxBreakdown($zugferdDocumentBuilder, $document);
         $this->applyPaymentTerms($zugferdDocumentBuilder, $document);
         $this->applyTotals($zugferdDocumentBuilder, $document);
@@ -169,7 +171,11 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
 
         throw_if($party->name === '' || $buyer->name === '', GobdInvoiceException::class, 'An EN 16931 e-invoice requires a named seller and buyer (§14 Abs. 4 UStG).');
 
-        $zugferdDocumentBuilder->setDocumentSeller($party->name);
+        $zugferdDocumentBuilder->setDocumentSeller($party->name, $party->sellerIdentifier());
+        if ($party->legalRegistrationId !== null && mb_trim($party->legalRegistrationId) !== '') {
+            $zugferdDocumentBuilder->setDocumentSellerLegalOrganisation($party->legalRegistrationId, null, null);
+        }
+
         $zugferdDocumentBuilder->setDocumentSellerAddress(
             $party->addressLine,
             null,
@@ -203,6 +209,65 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
         // BT-43: buyer contact email (BG-9), when known.
         if ($buyer->email !== null && mb_trim($buyer->email) !== '') {
             $zugferdDocumentBuilder->setDocumentBuyerContact(null, null, null, null, $buyer->email);
+        }
+    }
+
+    /**
+     * BG-3: a Storno and a Rechnungskorrektur are 381 credit notes that name
+     * the invoice they credit by its number (BT-25) and issue date (BT-26).
+     */
+    private function applyPrecedingInvoice(ZugferdDocumentBuilder $zugferdDocumentBuilder, Document $document): void
+    {
+        if (! $document->type->referencesPrecedingInvoice()) {
+            return;
+        }
+
+        $invoice = $document->loadMissing('source')->source;
+
+        throw_unless(
+            $invoice instanceof Document && $invoice->number !== null,
+            GobdInvoiceException::class,
+            "A [{$document->type->value}] e-invoice requires the finalized invoice it credits (BT-25).",
+        );
+
+        $zugferdDocumentBuilder->setDocumentInvoiceReferencedDocument($invoice->number, null, $invoice->issue_date);
+    }
+
+    /**
+     * BG-20 / BG-21: every document-level allowance and charge with its own
+     * category and rate, so BT-107/BT-108 (BR-CO-11/BR-CO-12) and the taxable
+     * amount of each VAT group (BR-S-08 and its siblings) reconcile. A negated
+     * document (Storno) stores the reversal of an allowance as a charge and
+     * vice versa; with its amounts emitted positive, each keeps the direction
+     * it has on the credited invoice.
+     */
+    private function applyDocumentAllowancesCharges(ZugferdDocumentBuilder $zugferdDocumentBuilder, Document $document): void
+    {
+        $negated = $this->outputSign($document) < 0;
+
+        foreach ($document->document_adjustments ?? [] as $adjustment) {
+            $isCharge = ($adjustment['type'] ?? 'allowance') === 'charge';
+            $emitAsCharge = $negated ? ! $isCharge : $isCharge;
+            $reason = isset($adjustment['reason']) && is_scalar($adjustment['reason']) && (string) $adjustment['reason'] !== ''
+                ? (string) $adjustment['reason']
+                : (string) trans('gobd-invoice::gobd-invoice.labels.'.($emitAsCharge ? 'charge' : 'allowance'));
+            $percentage = isset($adjustment['percentage']) && is_numeric($adjustment['percentage']) ? (float) $adjustment['percentage'] : null;
+            $base = isset($adjustment['base_minor']) && is_numeric($adjustment['base_minor']) ? $this->toAmount((int) $adjustment['base_minor']) : null;
+
+            $zugferdDocumentBuilder->addDocumentAllowanceCharge(
+                $this->toAmount($this->intFrom($adjustment, 'amount_minor')),
+                $emitAsCharge,
+                $this->stringFrom($adjustment, 'tax_category', TaxCategory::Standard->value),
+                'VAT',
+                isset($adjustment['tax_rate']) && is_numeric($adjustment['tax_rate']) ? (float) $adjustment['tax_rate'] : 0.0,
+                null,
+                $percentage,
+                $percentage !== null ? $base : null,
+                null,
+                null,
+                null,
+                $reason,
+            );
         }
     }
 
@@ -292,12 +357,19 @@ final readonly class ZugferdCiiSerializer implements EInvoiceSerializer
         // BR-CO-16 holds: BT-115 (amount due) = BT-112 − BT-113 + BT-114.
         $prepaidMinor = ($document->paid_total ?? 0) + ($document->advances_net_total ?? 0) + ($document->advances_vat_total ?? 0);
 
+        // Allowance and charge totals are magnitudes; on a negated document the
+        // stored charges are the reversed allowances of the credited invoice
+        // (see applyDocumentAllowancesCharges()), so the two totals swap.
+        [$chargeTotal, $allowanceTotal] = $sign < 0
+            ? [$document->allowance_total ?? 0, $document->charge_total ?? 0]
+            : [$document->charge_total ?? 0, $document->allowance_total ?? 0];
+
         $zugferdDocumentBuilder->setDocumentSummation(
             $this->toAmount($sign * ($document->gross_total ?? 0)),
             $this->toAmount($sign * ($document->amount_due ?? 0)),
             $this->toAmount($sign * ($document->line_net_total ?? 0)),
-            $this->toAmount($sign * ($document->charge_total ?? 0)),
-            $this->toAmount($sign * ($document->allowance_total ?? 0)),
+            $this->toAmount($chargeTotal),
+            $this->toAmount($allowanceTotal),
             $this->toAmount($sign * ($document->net_total ?? 0)),
             $this->toAmount($sign * ($document->vat_total ?? 0)),
             $this->toAmount($sign * ($document->rounding_total ?? 0)),

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
@@ -45,6 +46,65 @@ function draftWithParties(DocumentType $documentType, array $lines, array $attri
         'buyer' => ['name' => 'Kunde AG', 'address_line' => 'Nebenweg 2', 'postal_code' => '80331', 'city' => 'München', 'country' => 'DE'],
         'payment_terms' => ['net_days' => 30, 'note' => 'Zahlbar innerhalb von 30 Tagen.'],
     ], $attributes), $lines);
+}
+
+/**
+ * @return DOMXPath a namespace-registered XPath over the CII payload (also
+ *                  asserts the XML is well-formed)
+ */
+function ciiXpath(string $xml): DOMXPath
+{
+    $dom = new DOMDocument;
+    expect($dom->loadXML($xml))->toBeTrue();
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('rsm', 'urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100');
+    $xpath->registerNamespace('ram', 'urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100');
+    $xpath->registerNamespace('udt', 'urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100');
+
+    return $xpath;
+}
+
+function ciiValue(DOMXPath $xpath, string $query): ?string
+{
+    return $xpath->query($query)?->item(0)?->nodeValue;
+}
+
+/**
+ * @return list<string>
+ */
+function ciiValues(DOMXPath $xpath, string $query): array
+{
+    $values = [];
+    $nodes = $xpath->query($query);
+    foreach ($nodes ?: [] as $node) {
+        $values[] = (string) $node->nodeValue;
+    }
+
+    return $values;
+}
+
+/**
+ * @return DOMXPath a namespace-registered XPath over the UBL payload (also
+ *                  asserts the XML is well-formed)
+ */
+function ublXpath(string $xml): DOMXPath
+{
+    $dom = new DOMDocument;
+    expect($dom->loadXML($xml))->toBeTrue();
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('ubl', 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2');
+    $xpath->registerNamespace('creditnote', 'urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2');
+    $xpath->registerNamespace('cbc', 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2');
+    $xpath->registerNamespace('cac', 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2');
+
+    return $xpath;
+}
+
+function ublValue(DOMXPath $xpath, string $query): ?string
+{
+    return $xpath->query($query)?->item(0)?->nodeValue;
 }
 
 /**
@@ -223,6 +283,39 @@ function auditChainEnds(int|string $documentId): array
         ->pluck('content_hash')
         ->values()
         ->all();
+}
+
+const SIGNAL_TIMEOUT_SECONDS = 10;
+
+/**
+ * Wait in a forked process until another process touched the signal file.
+ */
+function awaitSignal(string $signal, string $failure): void
+{
+    $deadline = microtime(true) + SIGNAL_TIMEOUT_SECONDS;
+
+    while (! is_file($signal)) {
+        throw_if(microtime(true) > $deadline, RuntimeException::class, $failure);
+
+        clearstatcache(true, $signal);
+        Sleep::usleep(1_000);
+    }
+}
+
+/**
+ * Update, insert or delete a line of the document directly, the way a host
+ * connection past the models would. PostgreSQL only.
+ */
+function writeLineOf(string $operation, int|string $documentId): void
+{
+    $builder = DB::table('gobd_document_lines');
+
+    match ($operation) {
+        'update' => $builder->where('document_id', $documentId)->update(['description' => 'nach der Festschreibung geändert']),
+        'insert' => $builder->insert(['document_id' => $documentId, 'description' => 'nach der Festschreibung ergänzt']),
+        'delete' => $builder->where('document_id', $documentId)->delete(),
+        default => throw new InvalidArgumentException("Unknown line operation [{$operation}]."),
+    };
 }
 
 /**

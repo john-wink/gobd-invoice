@@ -14,6 +14,7 @@ return [
         'anzahlungsrechnung' => 'Down-payment invoice',
         'schlussrechnung' => 'Final invoice',
         'storno' => 'Cancellation invoice',
+        'rechnungskorrektur' => 'Invoice correction',
         'gutschrift' => 'Credit note',
         'mahnung' => 'Dunning notice',
     ],
@@ -47,5 +48,7 @@ return [
         'net_total' => 'Net total',
         'vat' => 'VAT',
         'gross_total' => 'Total',
+        'allowance' => 'Allowance',
+        'charge' => 'Charge',
     ],
 ];

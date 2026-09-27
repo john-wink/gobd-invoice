@@ -137,7 +137,7 @@ final readonly class GobdInvoiceManager
         // Document-level allowances/charges, payment terms and the accounting-
         // currency rate are validated into value objects now (fail loud) and
         // stored in canonical form so finalize() can rebuild them faithfully.
-        $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
+        $document->document_adjustments = $this->documentAdjustments($attributes['adjustments'] ?? null, $currency, $lines);
         $document->payment_terms = $this->normalizePaymentTerms($attributes['payment_terms'] ?? null);
         $document->accounting_rate = $this->normalizeAccountingRate($attributes['accounting_rate'] ?? null);
         $document->seller = $this->normalizeParty($attributes['seller'] ?? null);
@@ -243,7 +243,7 @@ final readonly class GobdInvoiceManager
                 );
             }
 
-            $document->document_adjustments = $this->normalizeAdjustments($attributes['adjustments'] ?? null, $currency);
+            $document->document_adjustments = $this->documentAdjustments($attributes['adjustments'] ?? null, $currency, $lines);
             $document->save();
 
             // Replace the line items (a draft carries no legal identity yet).
@@ -338,6 +338,11 @@ final readonly class GobdInvoiceManager
      * amount_due, and advance the status (PartiallyPaid → Paid). Payment tracking
      * is NOT §14 content, so it may change after Festschreibung; the §14 columns
      * stay frozen. The payment is written to the audit trail.
+     *
+     * The payable amount is the gross total less the advances a Schlussrechnung
+     * deducts (§14 Abs. 5 UStG, net and VAT as shown on the Abschlags- and
+     * Anzahlungsrechnungen) plus the payable rounding (BT-114): the same base
+     * finalize() derives the amount due (BT-115) from.
      */
     public function recordPayment(Document $document, int $amountMinor, ?CarbonInterface $paidAt = null): Document
     {
@@ -350,8 +355,11 @@ final readonly class GobdInvoiceManager
             throw_if($amountMinor <= 0, GobdInvoiceException::class, 'A payment amount must be positive.');
 
             $paid = (int) $document->paid_total + $amountMinor;
-            $gross = (int) $document->gross_total;
-            $target = $paid >= $gross ? DocumentStatus::Paid : DocumentStatus::PartiallyPaid;
+            $payable = (int) $document->gross_total
+                - (int) $document->advances_net_total
+                - (int) $document->advances_vat_total
+                + (int) $document->rounding_total;
+            $target = $paid >= $payable ? DocumentStatus::Paid : DocumentStatus::PartiallyPaid;
 
             throw_unless(
                 $document->status === $target || $document->status->canTransitionTo($target),
@@ -360,7 +368,7 @@ final readonly class GobdInvoiceManager
             );
 
             $document->paid_total = $paid;
-            $document->amount_due = max(0, $gross - $paid);
+            $document->amount_due = max(0, $payable - $paid);
             $document->status = $target;
             $document->save();
 
@@ -392,10 +400,22 @@ final readonly class GobdInvoiceManager
 
     /**
      * Mark an unpaid, past-due document as overdue (typically from a scheduler).
+     * Sending is not required: a festgeschriebene invoice falls due whether or
+     * not it was marked as sent. The due date must lie before today in the
+     * package time zone, and an amount must still be due.
      */
     public function markOverdue(Document $document): Document
     {
         throw_unless($document->status->canTransitionTo(DocumentStatus::Overdue), GobdInvoiceException::class, "Cannot mark a [{$document->status->value}] document as overdue.");
+        throw_if(($document->amount_due ?? 0) <= 0, GobdInvoiceException::class, "Document [{$document->number}] has no amount due and cannot be overdue.");
+
+        $dueDate = $document->due_date;
+
+        throw_if(
+            ! $dueDate instanceof CarbonInterface || $dueDate->toDateString() >= $this->now()->toDateString(),
+            GobdInvoiceException::class,
+            "Document [{$document->number}] is not past its due date [{$dueDate?->toDateString()}] and cannot be overdue.",
+        );
 
         $document->status = DocumentStatus::Overdue;
         $document->save();
@@ -661,8 +681,6 @@ final readonly class GobdInvoiceManager
             throw InvalidStatusTransitionException::between($document->status, DocumentStatus::Finalized);
         }
 
-        $document->loadMissing('lines');
-
         $issuedAt = $document->issue_date ?? $this->now();
         $series = (string) ($document->series ?? $document->type->defaultSeries());
 
@@ -681,6 +699,9 @@ final readonly class GobdInvoiceManager
         // finalized document. Keep this transaction tight: slow work (PDF /
         // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
         DB::transaction(function () use ($document, $issuedAt, $series, $number, $tenant): void {
+            $this->lockDraftForFinalize($document);
+            $document->load('lines');
+
             $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
             $this->applyTotals($document, $documentTotals);
 
@@ -695,6 +716,7 @@ final readonly class GobdInvoiceManager
             // runs unconditionally — it is not disabled by the field-validation
             // toggle above (which only relaxes §14 Abs. 4 completeness).
             $this->assertAdvancesDeducted($document);
+            $this->assertCreditsAnInvoice($document);
 
             $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year, $tenant);
 
@@ -739,6 +761,26 @@ final readonly class GobdInvoiceManager
         $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
 
         $document->setRawAttributes($current->getAttributes(), true);
+    }
+
+    /**
+     * Lock the draft's row before its lines are read, so a line written by
+     * another connection either lands before the read or waits for the
+     * Festschreibung and is refused by the line guard — never between the
+     * snapshot and the commit. Re-checks under the lock that the row is still
+     * a draft and re-reads it; changes on the instance that are not saved yet
+     * are kept and saved with the Festschreibung.
+     */
+    private function lockDraftForFinalize(Document $document): void
+    {
+        $unsaved = $document->getDirty();
+
+        $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
+
+        throw_if($current->documentStatus() !== DocumentStatus::Draft, InvalidStatusTransitionException::between($current->status, DocumentStatus::Finalized));
+
+        $document->setRawAttributes($current->getAttributes(), true);
+        $document->setRawAttributes([...$current->getAttributes(), ...$unsaved]);
     }
 
     /**
@@ -881,6 +923,150 @@ final readonly class GobdInvoiceManager
             'tax_category' => $taxRate->categoryCode(),
             'currency' => $currency,
         ];
+    }
+
+    /**
+     * The document-level allowances/charges in canonical form. A spec with
+     * `split_by_rate => true` is a Belegnachlass (or -zuschlag) on the whole
+     * document: it carries no rate of its own and is apportioned onto the
+     * (category, rate) groups of the lines, one allowance/charge per group with
+     * that group's category and rate, so the taxable amount of every group
+     * (BR-S-08 and its siblings) and the allowance total (BR-CO-11) reconcile.
+     *
+     * A fixed amount is shared in proportion to the net of each group; the
+     * cents left over by rounding down go to the groups with the largest
+     * remainders (largest remainder method), so the parts add up to the amount
+     * exactly. A percentage applies to the net of each group, each part keeping
+     * the percentage and its group net as base (BT-94/BT-93).
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function documentAdjustments(mixed $raw, string $currency, array $lines): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        $specs = [];
+
+        foreach ($raw as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            if (($item['split_by_rate'] ?? false) === true) {
+                array_push($specs, ...$this->splitByRate($item, $currency, $lines));
+
+                continue;
+            }
+
+            $specs[] = $item;
+        }
+
+        return $this->normalizeAdjustments($specs, $currency);
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $spec
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return list<array<string, mixed>>
+     */
+    private function splitByRate(array $spec, string $currency, array $lines): array
+    {
+        throw_if(isset($spec['tax_rate']) || isset($spec['tax_category']), InvalidArgumentException::class, 'An adjustment split by rate takes the rates of the lines and must not name its own tax_rate or tax_category.');
+
+        $groups = $this->lineNetsByRate($lines, $currency);
+
+        throw_if(
+            $groups === [] || array_any($groups, static fn (array $group): bool => $group['net'] <= 0),
+            InvalidArgumentException::class,
+            'An adjustment split by rate needs lines, and a positive net amount in every rate group.',
+        );
+
+        $common = [
+            'type' => $spec['type'] ?? 'allowance',
+            'reason' => $spec['reason'] ?? null,
+        ];
+
+        if (isset($spec['percentage'])) {
+            return array_map(static fn (array $group): array => [
+                ...$common,
+                'percentage' => $spec['percentage'],
+                'base_minor' => $group['net'],
+                'tax_rate' => $group['rate'],
+                'tax_category' => $group['category'],
+            ], $groups);
+        }
+
+        $parts = [];
+
+        foreach ($this->shareByLargestRemainder($this->toIntOrFail($spec['amount_minor'] ?? 0, 'amount_minor'), array_column($groups, 'net')) as $index => $share) {
+            if ($share === 0) {
+                continue;
+            }
+
+            $parts[] = [
+                ...$common,
+                'amount_minor' => $share,
+                'tax_rate' => $groups[$index]['rate'],
+                'tax_category' => $groups[$index]['category'],
+            ];
+        }
+
+        return $parts;
+    }
+
+    /**
+     * The line net per (category, rate) group, in the order the groups first
+     * appear on the lines.
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return list<array{category: string, rate: string, net: int}>
+     */
+    private function lineNetsByRate(array $lines, string $currency): array
+    {
+        $groups = [];
+
+        foreach (array_values($lines) as $index => $line) {
+            $attributes = $this->buildLineAttributes($index + 1, $line, $currency);
+            $category = $this->toStringValue($attributes['tax_category']);
+            $rate = $this->toStringValue($attributes['tax_rate']);
+            $key = "{$category}|{$rate}";
+
+            $groups[$key] ??= ['category' => $category, 'rate' => $rate, 'net' => 0];
+            $groups[$key]['net'] += $this->toIntOrFail($attributes['line_net_minor'], 'line_net_minor');
+        }
+
+        return array_values($groups);
+    }
+
+    /**
+     * Share a non-negative amount in proportion to positive weights: every part
+     * is rounded down, and the remaining minor units go one each to the parts
+     * with the largest remainders (the earlier part on a tie).
+     *
+     * @param  list<int>  $weights
+     * @return list<int>
+     */
+    private function shareByLargestRemainder(int $amount, array $weights): array
+    {
+        throw_if($amount < 0, InvalidArgumentException::class, 'An adjustment amount must be a positive magnitude; direction is carried by its type.');
+
+        $total = (string) array_sum($weights);
+        $products = array_map(static fn (int $weight): string => bcmul((string) $amount, (string) $weight), $weights);
+        $floors = array_map(static fn (string $product): int => (int) bcdiv($product, $total, 0), $products);
+        $remainders = array_map(static fn (string $product): string => bcmod($product, $total), $products);
+
+        $order = array_keys($remainders);
+        usort($order, static fn (int $a, int $b): int => bccomp($remainders[$b], $remainders[$a]));
+        $roundedUp = array_slice($order, 0, $amount - array_sum($floors));
+
+        return array_map(
+            static fn (int $index, int $floor): int => in_array($index, $roundedUp, true) ? $floor + 1 : $floor,
+            array_keys($floors),
+            $floors,
+        );
     }
 
     /**
@@ -1269,6 +1455,31 @@ final readonly class GobdInvoiceManager
             ->exists();
 
         throw_if($hasUndeducted, DocumentContentException::withViolations($document->number, ['undeducted_advances']));
+    }
+
+    /**
+     * A Rechnungskorrektur credits a festgeschriebene, uncancelled invoice of
+     * its own tenant (the BT-25 reference of the 381 credit note) and lowers
+     * the Entgelt, so its total is negative like a Storno's. Runs whether or
+     * not the §14 field validation is enabled.
+     */
+    private function assertCreditsAnInvoice(Document $document): void
+    {
+        if ($document->type !== DocumentType::Rechnungskorrektur) {
+            return;
+        }
+
+        $invoice = $document->source_document_id === null
+            ? null
+            : $this->documentsOfTenant($document)->find($document->source_document_id);
+
+        $creditsAnInvoice = $invoice instanceof Document
+            && $invoice->type->acceptsRechnungskorrektur()
+            && $invoice->finalized_at !== null
+            && $invoice->status !== DocumentStatus::Cancelled;
+
+        throw_unless($creditsAnInvoice, DocumentContentException::withViolations($document->number, ['credited_invoice']));
+        throw_unless(($document->gross_total ?? 0) < 0, DocumentContentException::withViolations($document->number, ['credit_amount']));
     }
 
     /**

@@ -100,6 +100,12 @@ final class PostgresGuards
      * document the session cannot see counts as festgeschrieben, so the guard
      * fails closed like the Storno guard. A line without a document cannot be
      * written either.
+     *
+     * The document is read FOR SHARE: a line write waits for a Festschreibung
+     * that holds the document row and is then judged by the committed row, so
+     * it is refused. A plain read would still see the draft and let it pass.
+     * The share lock stays until the line write commits, and a Festschreibung
+     * waits for it in turn.
      */
     public static function protectLines(string $lines, string $documents): void
     {
@@ -129,18 +135,24 @@ final class PostgresGuards
             BEGIN
                 {$tenantChecks}
 
-                IF TG_OP <> 'INSERT' AND NOT EXISTS (
-                    SELECT 1 FROM {$parent} d
+                IF TG_OP <> 'INSERT' THEN
+                    PERFORM 1 FROM {$parent} d
                     WHERE d.id = OLD.document_id AND (d.finalized_at IS NULL OR d.type NOT IN ({$types}))
-                ) THEN
-                    RAISE EXCEPTION '{$immutable}';
+                    FOR SHARE;
+
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION '{$immutable}';
+                    END IF;
                 END IF;
 
-                IF TG_OP <> 'DELETE' AND NOT EXISTS (
-                    SELECT 1 FROM {$parent} d
+                IF TG_OP <> 'DELETE' THEN
+                    PERFORM 1 FROM {$parent} d
                     WHERE d.id = NEW.document_id AND (d.finalized_at IS NULL OR d.type NOT IN ({$types}))
-                ) THEN
-                    RAISE EXCEPTION '{$immutable}';
+                    FOR SHARE;
+
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION '{$immutable}';
+                    END IF;
                 END IF;
 
                 IF TG_OP = 'DELETE' THEN

@@ -8,29 +8,6 @@ use JohnWink\GobdInvoice\EInvoice\ZugferdCiiSerializer;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Facades\GobdInvoice;
 
-/**
- * @return DOMXPath a namespace-registered XPath over the UBL payload (also
- *                  asserts the XML is well-formed)
- */
-function ublXpath(string $xml): DOMXPath
-{
-    $dom = new DOMDocument;
-    expect($dom->loadXML($xml))->toBeTrue();
-
-    $xpath = new DOMXPath($dom);
-    $xpath->registerNamespace('ubl', 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2');
-    $xpath->registerNamespace('creditnote', 'urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2');
-    $xpath->registerNamespace('cbc', 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2');
-    $xpath->registerNamespace('cac', 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2');
-
-    return $xpath;
-}
-
-function ublValue(DOMXPath $xpath, string $query): ?string
-{
-    return $xpath->query($query)?->item(0)?->nodeValue;
-}
-
 function ublSerializer(): XRechnungUblSerializer
 {
     return new XRechnungUblSerializer(new ZugferdCiiSerializer('xrechnung'));

@@ -11,7 +11,8 @@
 **A GoBD-compliant German business-document engine for Laravel.** Generate and
 manage invoices (Rechnung), quotes (Angebot), cost estimates (Kostenvoranschlag),
 progress/final invoices (Abschlags-/Schlussrechnung), cancellations (Storno),
-credit notes (Gutschrift), proof-of-performance (Leistungsnachweis), partial
+credit notes (Rechnungskorrektur), self-billed invoices (Gutschrift),
+proof-of-performance (Leistungsnachweis), partial
 payments (Teilzahlung) and dunning (Mahnung) — with immutable finalization,
 a tamper-evident audit trail, race-safe sequential numbering, EN 16931
 e-invoicing (XRechnung / ZUGFeRD / Factur-X, create + receive + validate),

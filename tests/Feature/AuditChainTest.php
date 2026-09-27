@@ -17,7 +17,7 @@ use JohnWink\GobdInvoice\Models\Document;
 
 function chainedInvoice(): Document
 {
-    $invoice = GobdInvoice::finalize(GobdInvoice::draft(DocumentType::Rechnung, [], lineSet('100.00')));
+    $invoice = GobdInvoice::finalize(GobdInvoice::draft(DocumentType::Rechnung, ['issue_date' => '2026-01-05'], lineSet('100.00')));
     GobdInvoice::markSent($invoice);
     GobdInvoice::markOverdue($invoice);
 

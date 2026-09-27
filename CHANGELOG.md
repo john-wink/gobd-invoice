@@ -8,6 +8,217 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.2.1] - Unreleased (0.2.1-rc.1, 0.2.1-rc.2, 0.2.1-rc.3: 2026-09-27)
+
+Closes the gaps a host found while building invoices on 0.2.0: a document
+type for the kaufmännische Gutschrift, overdue without sending, advances in
+payments, a Belegnachlass over several rates and a seller known only by its
+Steuernummer.
+
+### Fixed (0.2.1-rc.3)
+
+- **The Festschreibung locks its document before it reads the lines.**
+  `finalize()` read the lines before its transaction and locked the
+  document only with the final `save()`. A Festschreibung that waited for
+  the number counter left the draft unlocked in between: a line changed,
+  added or deleted by another connection in that wait went through, the
+  document was festgeschrieben with the old lines in its snapshot, and
+  `verify()` returned `false`. The `FOR SHARE` of the line guard (rc.2)
+  does not close this window, because nothing held the document yet. The
+  transaction now starts with `SELECT … FOR UPDATE` on the document and
+  reads the lines under that lock with `load()`, not `loadMissing()`, so
+  lines already loaded on the instance are read again. A line write in the
+  wait waits for the Festschreibung and is refused; one that committed
+  before the lock is part of the snapshot. Proven with two connections on
+  PostgreSQL 18 for update, insert and delete while a third holds the
+  counter; against rc.2 all three writes pass after 0.00 s.
+- **A stale copy of a festgeschriebene draft is refused.** Under the lock
+  the document is read again and must still be a draft;
+  `finalize()` on an instance loaded before another Festschreibung throws
+  `InvalidStatusTransitionException` and consumes no number of the gapless
+  counter (before, the document guard refused it on PostgreSQL with a
+  `QueryException`; on SQLite it went through). Changes on the instance that are not
+  saved yet are kept and saved with the Festschreibung, as before.
+
+### Upgrading from 0.2.1-rc.2
+
+No schema change. The instance `finalize()` returns now carries the
+stored row: on PostgreSQL its JSON columns (`document_adjustments`,
+`seller`, `buyer`, …) come back from jsonb, with the key order jsonb keeps
+instead of the order of the draft, as on any fresh read. The content hash
+sorts keys, so snapshots and `verify()` are unaffected. The Festschreibung
+now holds the row lock on the document before it takes the counter lock. A host transaction that locks a
+counter row and then a draft that is being festgeschrieben can deadlock;
+PostgreSQL aborts one of them. Lock the document first, as `finalize()`
+does.
+
+### Fixed (0.2.1-rc.2)
+
+- **A line write waits for a running Festschreibung and is refused.** The
+  trigger `gobd_document_lines_guard()` read the document of the line
+  without a lock. Under READ COMMITTED a line changed, added or deleted
+  while another connection festschrieb its document still saw the draft
+  and went through without waiting; the document was then festgeschrieben
+  with a line that changed under it. The trigger now reads the document
+  `FOR SHARE`, for the old and for the new document of the line: the write
+  waits for the Festschreibung, is judged by the committed row and refused.
+  Proven with two connections on PostgreSQL 18 for update, insert and
+  delete; without `FOR SHARE` (on either read) the test fails.
+- Checked for the same pattern and unchanged: `gobd_documents_storno_guard()`
+  reads its partner row without a lock, but only as a requirement on states
+  that never go back (festgeschrieben, cancelled), so a stale read can only
+  refuse, never let a forbidden write pass; `gobd_documents_guard()`,
+  `gobd_documents_status_guard()`, `gobd_number_sequences_guard()` and
+  `gobd_audit_log_guard()` read no other row. The tenant check of the line
+  guard reads the tenant of the document, which is immutable. Payments are
+  columns of the document and `recordPayment()` locks the row already.
+
+### Added (0.2.1-rc.2)
+
+- **The official KoSIT validator in CI.** The job `kosit` validates a
+  Rechnung, a Rechnungskorrektur (381 with BT-25), a Storno (381 with BT-25)
+  and a Schlussrechnung with two Abschlagsrechnungen against the EN 16931
+  CII scenario of the KoSIT validator (XML schema and CEN Schematron) and
+  prints the result per example. `.github/kosit/fetch.sh` downloads
+  validator 1.6.3 and configuration v2026-08-31 (XRechnung 3.0.2, CEN
+  Schematron 1.3.16) from itplr-kosit and checks both by SHA-256; with Java
+  the same runs locally:
+  `bash .github/kosit/fetch.sh build/kosit` and
+  `GOBD_KOSIT_DIR=build/kosit vendor/bin/pest --filter=KositValidationTest`.
+  All four examples are accepted without errors or warnings; no change to
+  the serializer was needed.
+
+### Upgrading from 0.2.1-rc.1
+
+1. **PostgreSQL:** call `PostgresGuards::protectLines('gobd_document_lines',
+   'gobd_documents')` again in a host migration (a host that set the guard
+   in its own migration, such as craftplan-next, adds a new one after it).
+   It replaces the function `gobd_document_lines_guard()` (new body, same
+   name and signature) and recreates its trigger (`BEFORE INSERT OR UPDATE
+   OR DELETE`, unchanged definition) and
+   `gobd_document_lines_refuse_truncate()` unchanged. No new function,
+   trigger, table or column; the package migrations create new tables with
+   it.
+2. `FOR SHARE` needs the `UPDATE` privilege on `gobd_documents` for the
+   role that writes lines, and under row level security the document must
+   pass the `UPDATE` policy as well as the `SELECT` policy. A document the
+   session may not update counts as festgeschrieben: its lines are refused.
+3. Two transactions that each write a line of the same draft first and the
+   draft itself afterwards now take the share lock before the row lock and
+   can deadlock; PostgreSQL aborts one of them. Write the document before
+   its lines in one transaction, as `updateDraft()` does.
+
+### Added
+
+- **`DocumentType::Rechnungskorrektur`** (`rechnungskorrektur`): the
+  kaufmännische Gutschrift — a price reduction, refund or bonus the supplier
+  grants on its own festgeschriebene invoice. It is its own type, apart from
+  the Storno (full reversal) and the Gutschrift (self-billing, 389), with its
+  own number series (`rechnungskorrektur`). Draft it with
+  `source_document_id` set to the credited invoice and negative amounts, like
+  a Storno. `finalize()` refuses it (`DocumentContentException`, violation
+  `credited_invoice`) unless it credits a festgeschriebene, uncancelled
+  Rechnung, Abschlags-, Anzahlungs- or Schlussrechnung of its own tenant, and
+  (`credit_amount`) unless its total is negative. The credited invoice keeps
+  its status. Title: „Rechnungskorrektur“ (en: “Invoice correction”); the
+  word „Gutschrift“ stays reserved for self-billing (§ 14 Abs. 2 Satz 2,
+  Abs. 4 Nr. 10 UStG).
+- **E-invoice type codes (BT-3, UNTDID 1001):**
+
+  | Type | Code | BG-3 / BT-25 |
+  |---|---|---|
+  | Storno | 381 Credit note | the cancelled invoice |
+  | Rechnungskorrektur | 381 Credit note | the credited invoice |
+  | Gutschrift (self-billing) | 389 Self-billed invoice | — |
+
+  384 (Corrected invoice) is not used: it replaces an invoice with revised
+  content instead of crediting an amount. `DocumentType::referencesPrecedingInvoice()`
+  and `DocumentType::acceptsRechnungskorrektur()` expose the rules.
+- **Belegnachlass over several rates.** A document-level adjustment with
+  `'split_by_rate' => true` (and no `tax_rate`/`tax_category`) is split onto
+  the (category, rate) groups of the lines: one allowance or charge per
+  group with that group's category and rate. A fixed `amount_minor` is
+  shared in proportion to the group nets, the cents left over by rounding go
+  to the largest remainders, so the parts add up exactly; a `percentage`
+  applies to each group net as its base. `draft()` and `updateDraft()` split
+  against the lines they receive.
+- **Seller identifiers.** `Party` carries `identifier` (BT-29, e.g. the
+  supplier number the buyer assigned) and `legal_registration_id` (BT-30,
+  e.g. the Handelsregisternummer); both are emitted for the seller.
+- `markOverdue()` works from `finalized`: `DocumentStatus::Finalized` may
+  move to `Overdue`.
+
+### Fixed
+
+- **Document-level allowances and charges reach the e-invoice.** The CII
+  serializer did not write BG-20/BG-21, so every document with a
+  Belegnachlass or -zuschlag failed BR-CO-11/BR-CO-12 and the taxable amount
+  of its VAT group (BR-S-08 and siblings). Each adjustment is now emitted
+  with its category, rate, percentage and base; a missing reason falls back
+  to „Nachlass“/„Zuschlag“ (BT-97/BT-104). On a Storno the reversed
+  adjustments keep the direction they have on the cancelled invoice, and
+  BT-107/BT-108 swap accordingly, so the 381 credit note reconciles.
+- **A seller with only a Steuernummer gets a valid e-invoice.** BR-CO-26
+  (EN 16931) asks for a seller identifier (BT-29), a legal registration
+  (BT-30) or a USt-IdNr (BT-31); the Steuernummer in BT-32 (scheme FC) does
+  not count. With none of the three given, the Steuernummer is now emitted
+  as BT-29 as well. The validator is unchanged and still flags a seller
+  without any identifier.
+- **Storno and Rechnungskorrektur reference the credited invoice** (BG-3:
+  BT-25 number, BT-26 issue date) in CII and, through the bridge, in UBL
+  (`BillingReference`).
+- **Payments count the advances of a Schlussrechnung.** `recordPayment()`
+  measured the payment against the gross total. It now uses the amount
+  payable: gross total − deducted advances (net and VAT, § 14 Abs. 5 UStG) +
+  payable rounding — the base `finalize()` computes the amount due from. A
+  Schlussrechnung over 3,570.00 with an advance of 1,190.00 is paid after
+  2,380.00, and a payment of 1,000.00 leaves 1,380.00 due (was: 2,570.00).
+- **`markOverdue()` checks the due date.** It refuses a document whose due
+  date (issue date + `payment_terms.net_days`, else the issue date) is not
+  before today in the package time zone, and a document with no amount due
+  (a Storno, a Rechnungskorrektur, a Schlussrechnung covered by its
+  advances).
+- **The package translations load.** spatie's `hasTranslations()` looks in
+  `resources/lang/`, the files live in `lang/`; every
+  `gobd-invoice::gobd-invoice.*` key resolved to itself — among others the
+  exemption reason (BT-120) of the e-invoice. The provider now registers
+  `lang/` as the `gobd-invoice` namespace.
+
+### Upgrading from 0.2.0
+
+1. **Hosts that issue kaufmännische Gutschriften as `DocumentType::Gutschrift`
+   (389):** draft new ones as `DocumentType::Rechnungskorrektur` with
+   `source_document_id` and negative amounts. 389 declares the document a
+   self-billed invoice the *buyer* issued (§ 14 Abs. 2 Satz 2 UStG); a
+   supplier's own credit is a 381 credit note. Festgeschriebene 389
+   documents stay what they are — type, number, snapshot and hash are not
+   touched, and `verify()` keeps passing. Correct a wrongly typed one only
+   the GoBD way: Storno it and issue a Rechnungskorrektur. The new type
+   numbers in its own series `rechnungskorrektur`; a host that numbered its
+   credits in the `gutschrift` series (e.g. with a prefix „GS“) maps its
+   prefix to the new series, and the `gutschrift` counter stays where it is.
+2. **PostgreSQL:** call `PostgresGuards::protectDocuments('gobd_documents')`
+   and `PostgresGuards::protectLines('gobd_document_lines', 'gobd_documents')`
+   again in a host migration. Both replace their functions (same names and
+   signatures) with the new lists baked in: the status guard now allows
+   `finalized>overdue`, and `rechnungskorrektur` joins the immutable types of
+   the document and line guards. Without it the database refuses
+   `markOverdue()` on a festgeschriebene, unsent invoice, and a
+   festgeschriebene Rechnungskorrektur is guarded only by the model. No new
+   function, trigger, table or column.
+3. **Overdue jobs:** `markOverdue()` may now be called for `finalized`
+   documents too, and refuses documents that are not past due or have
+   nothing to pay — call it only for those, or catch the
+   `GobdInvoiceException`.
+4. **Payments on a Schlussrechnung:** a host that netted the advances out
+   itself before calling `recordPayment()` (or recorded them as payments)
+   stops doing so; pass the amount the customer actually paid.
+5. **Belegnachlass:** a host that spread a document discount onto the lines
+   itself can pass it as one adjustment with `'split_by_rate' => true`.
+6. `Party::toArray()` has two more keys (`identifier`,
+   `legal_registration_id`); new drafts store them in `seller`/`buyer`.
+   Stored documents are not rewritten and keep verifying.
+
 ## [0.2.0] - 2026-09-27
 
 First stable 0.2 release. It contains everything from 0.2.0-rc.1 to
