@@ -8,6 +8,11 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-27
+
+First stable 0.2 release. It contains everything from 0.2.0-rc.1 to
+0.2.0-rc.6 below; the code is identical to 0.2.0-rc.6.
+
 ### Fixed (0.2.0-rc.6)
 
 - **The line guard fails closed under row level security.** The trigger
@@ -447,5 +452,6 @@ tenant and do not verify under rc.4; pre-release data has to be recreated.
   access, the German document taxonomy, money/VAT/rounding rules, a
   reference/competitor analysis, the package architecture and the quality gates.
 
-[Unreleased]: https://github.com/john-wink/gobd-invoice/compare/v0.1.0...main
+[Unreleased]: https://github.com/john-wink/gobd-invoice/compare/v0.2.0...main
+[0.2.0]: https://github.com/john-wink/gobd-invoice/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/john-wink/gobd-invoice/releases/tag/v0.1.0
