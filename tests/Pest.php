@@ -48,6 +48,65 @@ function draftWithParties(DocumentType $documentType, array $lines, array $attri
 }
 
 /**
+ * @return DOMXPath a namespace-registered XPath over the CII payload (also
+ *                  asserts the XML is well-formed)
+ */
+function ciiXpath(string $xml): DOMXPath
+{
+    $dom = new DOMDocument;
+    expect($dom->loadXML($xml))->toBeTrue();
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('rsm', 'urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100');
+    $xpath->registerNamespace('ram', 'urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100');
+    $xpath->registerNamespace('udt', 'urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100');
+
+    return $xpath;
+}
+
+function ciiValue(DOMXPath $xpath, string $query): ?string
+{
+    return $xpath->query($query)?->item(0)?->nodeValue;
+}
+
+/**
+ * @return list<string>
+ */
+function ciiValues(DOMXPath $xpath, string $query): array
+{
+    $values = [];
+    $nodes = $xpath->query($query);
+    foreach ($nodes ?: [] as $node) {
+        $values[] = (string) $node->nodeValue;
+    }
+
+    return $values;
+}
+
+/**
+ * @return DOMXPath a namespace-registered XPath over the UBL payload (also
+ *                  asserts the XML is well-formed)
+ */
+function ublXpath(string $xml): DOMXPath
+{
+    $dom = new DOMDocument;
+    expect($dom->loadXML($xml))->toBeTrue();
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('ubl', 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2');
+    $xpath->registerNamespace('creditnote', 'urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2');
+    $xpath->registerNamespace('cbc', 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2');
+    $xpath->registerNamespace('cac', 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2');
+
+    return $xpath;
+}
+
+function ublValue(DOMXPath $xpath, string $query): ?string
+{
+    return $xpath->query($query)?->item(0)?->nodeValue;
+}
+
+/**
  * Rebind the AuditLogger to one that throws on the given event so the
  * finalize/cancel failure paths can be exercised. Forces the manager singleton
  * and the facade cache to rebuild with the throwing logger.

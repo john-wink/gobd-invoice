@@ -7,42 +7,6 @@ use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Exceptions\GobdInvoiceException;
 use JohnWink\GobdInvoice\Facades\GobdInvoice;
 
-/**
- * @return DOMXPath a namespace-registered XPath over the CII payload (also
- *                  asserts the XML is well-formed)
- */
-function ciiXpath(string $xml): DOMXPath
-{
-    $dom = new DOMDocument;
-    expect($dom->loadXML($xml))->toBeTrue();
-
-    $xpath = new DOMXPath($dom);
-    $xpath->registerNamespace('rsm', 'urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100');
-    $xpath->registerNamespace('ram', 'urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100');
-    $xpath->registerNamespace('udt', 'urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100');
-
-    return $xpath;
-}
-
-function ciiValue(DOMXPath $xpath, string $query): ?string
-{
-    return $xpath->query($query)?->item(0)?->nodeValue;
-}
-
-/**
- * @return list<string>
- */
-function ciiValues(DOMXPath $xpath, string $query): array
-{
-    $values = [];
-    $nodes = $xpath->query($query);
-    foreach ($nodes ?: [] as $node) {
-        $values[] = (string) $node->nodeValue;
-    }
-
-    return $values;
-}
-
 it('exports a finalized Rechnung as EN 16931 CII XML', function (): void {
     $invoice = GobdInvoice::finalize(draftWithParties(DocumentType::Rechnung, [
         ['description' => 'Beratung', 'quantity' => '2', 'unit' => 'Stunde', 'unit_price' => '100.00', 'tax_rate' => '19.0'],
