@@ -42,8 +42,12 @@ Steuernummer.
 
 ### Upgrading from 0.2.1-rc.2
 
-No schema change. The Festschreibung now holds the row lock on the
-document before it takes the counter lock. A host transaction that locks a
+No schema change. The instance `finalize()` returns now carries the
+stored row: on PostgreSQL its JSON columns (`document_adjustments`,
+`seller`, `buyer`, …) come back from jsonb, with the key order jsonb keeps
+instead of the order of the draft, as on any fresh read. The content hash
+sorts keys, so snapshots and `verify()` are unaffected. The Festschreibung
+now holds the row lock on the document before it takes the counter lock. A host transaction that locks a
 counter row and then a draft that is being festgeschrieben can deadlock;
 PostgreSQL aborts one of them. Lock the document first, as `finalize()`
 does.
