@@ -69,6 +69,14 @@ use JohnWink\GobdInvoice\ValueObjects\TotalsInput;
  */
 final readonly class GobdInvoiceManager
 {
+    /**
+     * Columns that move on after Festschreibung as payments come in; they are
+     * not part of the hashed snapshot.
+     *
+     * @var list<string>
+     */
+    private const array PAYMENT_STATE = ['paid_total', 'amount_due'];
+
     public function __construct(
         private NumberSequenceGenerator $numberSequenceGenerator,
         private DocumentTotalsCalculator $documentTotalsCalculator,
@@ -264,7 +272,28 @@ final readonly class GobdInvoiceManager
         // and finalizes the Storno, would trip the four-eyes rule on themselves).
         $this->segregationPolicy->assertCanFinalize($document, $this->actorResolver->resolve());
 
-        return $this->performFinalize($document);
+        if ($document->type !== DocumentType::Storno || $document->source_document_id === null) {
+            return $this->performFinalize($document);
+        }
+
+        // A Storno drafted by the host against a document cancels that document
+        // when it is festgeschrieben — the same pairing cancel() produces.
+        $original = $this->documentsOfTenant($document)->find($document->source_document_id);
+
+        throw_unless($original instanceof Document, InvalidStatusTransitionException::stornoWithoutSource());
+
+        $meta = $document->meta ?? [];
+        $reason = isset($meta['reason']) && is_string($meta['reason']) ? $meta['reason'] : null;
+
+        DB::transaction(function () use ($original, $document, $reason): void {
+            $this->lockForCancellation($original);
+            $this->performFinalize($document);
+            $this->markCancelled($original, $document, $reason);
+        });
+
+        event(new DocumentCancelled($original, $document));
+
+        return $document;
     }
 
     /**
@@ -277,20 +306,26 @@ final readonly class GobdInvoiceManager
     public function verify(Document $document): bool
     {
         $contentHash = $document->content_hash;
+        $payload = $document->finalized_payload;
 
-        if ($document->finalized_payload === null || $contentHash === null) {
+        if ($payload === null || $contentHash === null) {
             return false;
         }
 
         // (1) The frozen snapshot is internally consistent with its hash.
-        if (! hash_equals($contentHash, $this->contentHasher->hash($document->finalized_payload))) {
+        if (! hash_equals($contentHash, $this->contentHasher->hash($payload))) {
             return false;
         }
 
         // (2) The live document and its lines still reconcile with the snapshot.
+        // Payments move on after Festschreibung, so the payment state is not part
+        // of the snapshot; a snapshot taken before 0.2.0-rc.4 still carries it
+        // and is compared without it.
         $document->loadMissing('lines');
 
-        if (! hash_equals($contentHash, $this->contentHasher->hash($this->buildSnapshot($document)))) {
+        $frozen = array_diff_key($payload, array_flip(self::PAYMENT_STATE));
+
+        if (! hash_equals($this->contentHasher->hash($frozen), $this->contentHasher->hash($this->buildSnapshot($document)))) {
             return false;
         }
 
@@ -306,29 +341,35 @@ final readonly class GobdInvoiceManager
      */
     public function recordPayment(Document $document, int $amountMinor, ?CarbonInterface $paidAt = null): Document
     {
-        throw_if($document->finalized_at === null, GobdInvoiceException::class, "Only a finalized document can receive a payment; [{$document->number}] is not finalized.");
-        throw_if($amountMinor <= 0, GobdInvoiceException::class, 'A payment amount must be positive.');
+        // Atomic: the row is locked and re-read before the payment is added, so
+        // two payments booked at the same moment both count.
+        DB::transaction(function () use ($document, $amountMinor, $paidAt): void {
+            $this->lockAndRefresh($document);
 
-        $paid = (int) $document->paid_total + $amountMinor;
-        $gross = (int) $document->gross_total;
-        $target = $paid >= $gross ? DocumentStatus::Paid : DocumentStatus::PartiallyPaid;
+            throw_if($document->finalized_at === null, GobdInvoiceException::class, "Only a finalized document can receive a payment; [{$document->number}] is not finalized.");
+            throw_if($amountMinor <= 0, GobdInvoiceException::class, 'A payment amount must be positive.');
 
-        throw_unless(
-            $document->status === $target || $document->status->canTransitionTo($target),
-            GobdInvoiceException::class,
-            "Cannot record a payment on a [{$document->status->value}] document.",
-        );
+            $paid = (int) $document->paid_total + $amountMinor;
+            $gross = (int) $document->gross_total;
+            $target = $paid >= $gross ? DocumentStatus::Paid : DocumentStatus::PartiallyPaid;
 
-        $document->paid_total = $paid;
-        $document->amount_due = max(0, $gross - $paid);
-        $document->status = $target;
-        $document->save();
+            throw_unless(
+                $document->status === $target || $document->status->canTransitionTo($target),
+                GobdInvoiceException::class,
+                "Cannot record a payment on a [{$document->status->value}] document.",
+            );
 
-        $this->auditLogger->append($document, 'payment_recorded', [
-            'amount_minor' => $amountMinor,
-            'paid_total' => $paid,
-            'paid_at' => ($paidAt ?? Date::now())->toDateString(),
-        ]);
+            $document->paid_total = $paid;
+            $document->amount_due = max(0, $gross - $paid);
+            $document->status = $target;
+            $document->save();
+
+            $this->auditLogger->append($document, 'payment_recorded', [
+                'amount_minor' => $amountMinor,
+                'paid_total' => $paid,
+                'paid_at' => ($paidAt ?? Date::now())->toDateString(),
+            ]);
+        });
 
         return $document;
     }
@@ -492,44 +533,37 @@ final readonly class GobdInvoiceManager
      */
     public function cancel(Document $document, string $reason): Document
     {
-        throw_unless($document->isImmutable(), GobdInvoiceException::class, 'Only a finalized, tax-relevant document can be cancelled via Storno.');
-
-        if ($document->documentStatus() === DocumentStatus::Cancelled) {
-            throw new GobdInvoiceException("Document [{$document->number}] is already cancelled.");
-        }
-
-        // IKS segregation of duties (preventive control): may this actor cancel?
-        $this->segregationPolicy->assertCanCancel($document, $this->actorResolver->resolve());
-
-        $document->loadMissing('lines');
-
-        $stornoLines = $document->lines->map(fn (DocumentLine $documentLine): array => [
-            ...$this->passthroughValuesOf($documentLine),
-            'description' => $documentLine->description,
-            'quantity' => '1',
-            'unit' => $documentLine->unit,
-            'unit_price_minor' => -$documentLine->line_net_minor,
-            'price_mode' => PriceMode::Net->value,
-            'tax_rate' => $documentLine->tax_rate,
-            'tax_category' => $documentLine->tax_category,
-        ])->values()->all();
-
-        // Flip document-level allowances/charges so the Storno's totals are the
-        // exact negation of the original (an allowance that reduced the base is
-        // reversed by a charge, and vice versa). The accounting-currency rate is
-        // inherited so a non-EUR Storno can still express BT-111.
-        $stornoAdjustments = $this->reversedAdjustments($document);
-
         // Atomic Storno: the new Storno's draft+finalization, the original's flip
         // to Cancelled, and the 'cancelled' audit entry commit together. A failure
         // anywhere rolls the whole correction back, so there can be no orphan
-        // Storno without its cancelled original (Storno statt Löschen).
+        // Storno without its cancelled original (Storno statt Löschen). The
+        // original is locked and re-checked first, so of two cancellations at
+        // the same moment exactly one issues a Storno.
         // The Storno reverses the supply (lines + allowances/charges), not the
         // payment: the original's paid amount (BT-113) and Skonto terms are a
         // payment-reconciliation concern and are deliberately not carried over,
         // so the Storno is a full credit (amount due = −gross) reconciled against
         // any prior payment outside this document.
-        $storno = DB::transaction(function () use ($document, $reason, $stornoLines, $stornoAdjustments): Document {
+        $storno = DB::transaction(function () use ($document, $reason): Document {
+            $this->lockForCancellation($document);
+
+            $document->loadMissing('lines');
+
+            $stornoLines = $document->lines->map(fn (DocumentLine $documentLine): array => [
+                ...$this->passthroughValuesOf($documentLine),
+                'description' => $documentLine->description,
+                'quantity' => '1',
+                'unit' => $documentLine->unit,
+                'unit_price_minor' => -$documentLine->line_net_minor,
+                'price_mode' => PriceMode::Net->value,
+                'tax_rate' => $documentLine->tax_rate,
+                'tax_category' => $documentLine->tax_category,
+            ])->values()->all();
+
+            // Flip document-level allowances/charges so the Storno's totals are the
+            // exact negation of the original (an allowance that reduced the base is
+            // reversed by a charge, and vice versa). The accounting-currency rate is
+            // inherited so a non-EUR Storno can still express BT-111.
             $storno = $this->draft(DocumentType::Storno, [
                 ...$this->tenantAttributesOf($document),
                 'currency' => $document->currency,
@@ -538,24 +572,16 @@ final readonly class GobdInvoiceManager
                 'service_period_start' => $document->service_period_start,
                 'service_period_end' => $document->service_period_end,
                 'is_financial_sector' => $document->is_financial_sector,
-                'adjustments' => $stornoAdjustments,
+                'adjustments' => $this->reversedAdjustments($document),
                 'accounting_rate' => $document->accounting_rate,
                 'seller' => $document->seller,
                 'buyer' => $document->buyer,
+                'source_document_id' => $document->id,
                 'meta' => ['reason' => $reason, 'storno_of' => $document->number],
             ], $stornoLines);
 
-            $storno->source_document_id = $document->id;
-            $storno->save();
             $this->performFinalize($storno);
-
-            $document->status = DocumentStatus::Cancelled;
-            $document->save();
-
-            $this->auditLogger->append($document, 'cancelled', [
-                'storno' => $storno->number,
-                'reason' => $reason,
-            ]);
+            $this->markCancelled($document, $storno, $reason);
 
             return $storno;
         });
@@ -691,6 +717,45 @@ final readonly class GobdInvoiceManager
         event(new DocumentFinalized($document));
 
         return $document;
+    }
+
+    /**
+     * Lock the document's row for the rest of the transaction and load its
+     * current state into the given instance, so a decision never rests on a
+     * stale copy.
+     */
+    private function lockAndRefresh(Document $document): void
+    {
+        $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
+
+        $document->setRawAttributes($current->getAttributes(), true);
+    }
+
+    /**
+     * Lock the document to be cancelled and re-check, under the lock, that it
+     * may be cancelled — by this actor, and not a second time.
+     */
+    private function lockForCancellation(Document $document): void
+    {
+        $this->lockAndRefresh($document);
+
+        throw_unless($document->isImmutable(), GobdInvoiceException::class, 'Only a finalized, tax-relevant document can be cancelled via Storno.');
+        throw_if($document->documentStatus() === DocumentStatus::Cancelled, GobdInvoiceException::class, "Document [{$document->number}] is already cancelled.");
+        throw_unless($document->status->canTransitionTo(DocumentStatus::Cancelled), InvalidStatusTransitionException::between($document->status, DocumentStatus::Cancelled));
+
+        // IKS segregation of duties (preventive control): may this actor cancel?
+        $this->segregationPolicy->assertCanCancel($document, $this->actorResolver->resolve());
+    }
+
+    private function markCancelled(Document $document, Document $storno, ?string $reason): void
+    {
+        $document->status = DocumentStatus::Cancelled;
+        $document->save();
+
+        $this->auditLogger->append($document, 'cancelled', [
+            'storno' => $storno->number,
+            'reason' => $reason,
+        ]);
     }
 
     private function summarizeViolations(ValidationResult $validationResult): string
@@ -1043,9 +1108,7 @@ final readonly class GobdInvoiceManager
             'net_total' => $document->net_total,
             'vat_total' => $document->vat_total,
             'gross_total' => $document->gross_total,
-            'paid_total' => $document->paid_total,
             'rounding_total' => $document->rounding_total,
-            'amount_due' => $document->amount_due,
             'vat_accounting_total' => $document->vat_accounting_total,
             'advances_net_total' => $document->advances_net_total,
             'advances_vat_total' => $document->advances_vat_total,
