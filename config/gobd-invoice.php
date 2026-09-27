@@ -86,6 +86,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Time zone of the business day
+    |--------------------------------------------------------------------------
+    |
+    | The calendar day of an issue date, of a payment without date and of the
+    | year in a document number is the day in this time zone, not the UTC day
+    | of the server clock. null (the default) uses the app time zone
+    | (`app.timezone`). Set it when the business day differs from the app
+    | time zone, e.g. 'Europe/Berlin' on a UTC app.
+    |
+    */
+    'timezone' => null,
+
+    /*
+    |--------------------------------------------------------------------------
     | VAT (Umsatzsteuer)
     |--------------------------------------------------------------------------
     |
