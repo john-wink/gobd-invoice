@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
@@ -282,6 +283,39 @@ function auditChainEnds(int|string $documentId): array
         ->pluck('content_hash')
         ->values()
         ->all();
+}
+
+const SIGNAL_TIMEOUT_SECONDS = 10;
+
+/**
+ * Wait in a forked process until another process touched the signal file.
+ */
+function awaitSignal(string $signal, string $failure): void
+{
+    $deadline = microtime(true) + SIGNAL_TIMEOUT_SECONDS;
+
+    while (! is_file($signal)) {
+        throw_if(microtime(true) > $deadline, RuntimeException::class, $failure);
+
+        clearstatcache(true, $signal);
+        Sleep::usleep(1_000);
+    }
+}
+
+/**
+ * Update, insert or delete a line of the document directly, the way a host
+ * connection past the models would. PostgreSQL only.
+ */
+function writeLineOf(string $operation, int|string $documentId): void
+{
+    $builder = DB::table('gobd_document_lines');
+
+    match ($operation) {
+        'update' => $builder->where('document_id', $documentId)->update(['description' => 'nach der Festschreibung geändert']),
+        'insert' => $builder->insert(['document_id' => $documentId, 'description' => 'nach der Festschreibung ergänzt']),
+        'delete' => $builder->where('document_id', $documentId)->delete(),
+        default => throw new InvalidArgumentException("Unknown line operation [{$operation}]."),
+    };
 }
 
 /**

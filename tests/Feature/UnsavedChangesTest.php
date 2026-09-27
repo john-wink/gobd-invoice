@@ -11,7 +11,9 @@ use JohnWink\GobdInvoice\Models\Document;
 /*
  * recordPayment() and cancel() lock the document and re-read it. A change the
  * host made on its instance and did not save would be overwritten by that
- * re-read, so they refuse instead of dropping it silently.
+ * re-read, so they refuse instead of dropping it silently. finalize() locks
+ * and re-reads the draft as well, but keeps such a change and saves it with
+ * the Festschreibung, as it always has.
  */
 
 function finalizedInvoiceWithUnsavedMeta(): Document
@@ -49,4 +51,17 @@ it('books a payment once the host saved its change', function (): void {
 
     expect($invoice->fresh()?->meta)->toBe(['exported' => true])
         ->and($invoice->fresh()?->paid_total)->toBe(5000);
+});
+
+it('saves an unsaved change of a draft with its Festschreibung', function (): void {
+    $draft = GobdInvoice::draft(DocumentType::Rechnung, [], lineSet('100.00'));
+    $draft->meta = ['exported' => true];
+
+    GobdInvoice::finalize($draft);
+
+    $finalized = Document::query()->findOrFail($draft->id);
+
+    expect($finalized->meta)->toBe(['exported' => true])
+        ->and($finalized->status)->toBe(DocumentStatus::Finalized)
+        ->and(GobdInvoice::verify($finalized))->toBeTrue();
 });

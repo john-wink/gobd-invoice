@@ -24,32 +24,6 @@ const LINE_GUARD_HOLD_MICROSECONDS = 1_000_000;
 
 const LINE_GUARD_MINIMUM_WAIT_SECONDS = 0.5;
 
-const LINE_GUARD_SIGNAL_TIMEOUT_SECONDS = 10;
-
-function awaitSignal(string $signal): void
-{
-    $deadline = microtime(true) + LINE_GUARD_SIGNAL_TIMEOUT_SECONDS;
-
-    while (! is_file($signal)) {
-        throw_if(microtime(true) > $deadline, RuntimeException::class, 'The Festschreibung never started.');
-
-        clearstatcache(true, $signal);
-        Sleep::usleep(1_000);
-    }
-}
-
-function writeLineOf(string $operation, int|string $documentId): void
-{
-    $builder = DB::table('gobd_document_lines');
-
-    match ($operation) {
-        'update' => $builder->where('document_id', $documentId)->update(['description' => 'nach der Festschreibung geändert']),
-        'insert' => $builder->insert(['document_id' => $documentId, 'description' => 'nach der Festschreibung ergänzt']),
-        'delete' => $builder->where('document_id', $documentId)->delete(),
-        default => throw new InvalidArgumentException("Unknown line operation [{$operation}]."),
-    };
-}
-
 it('makes a line write wait for an open Festschreibung and then refuses it', function (string $operation): void {
     $draft = GobdInvoice::draft(DocumentType::Rechnung, [], lineSet('100.00'));
     $signal = sys_get_temp_dir().DIRECTORY_SEPARATOR.'gobd-line-guard-'.bin2hex(random_bytes(8));
@@ -65,7 +39,7 @@ it('makes a line write wait for an open Festschreibung and then refuses it', fun
             return;
         }
 
-        awaitSignal($signal);
+        awaitSignal($signal, 'The Festschreibung never started.');
         $started = hrtime(true);
 
         try {
