@@ -25,7 +25,11 @@ return new class extends Migration
             $table->string('actor')->nullable();
             $table->jsonb('context')->nullable();
 
-            // Hash chain: each entry references the previous entry's hash.
+            // Hash chain: each entry references the previous entry's hash. The
+            // position in the chain is explicit (1, 2, …) and unique per
+            // document, so two writers can never fork the chain and the order
+            // never depends on the key type.
+            $table->unsignedInteger('sequence');
             $table->string('content_hash')->nullable();
             $table->string('previous_hash')->nullable();
 
@@ -33,6 +37,7 @@ return new class extends Migration
             $table->timestampTz('created_at')->nullable()->useCurrent();
 
             $table->index(['document_id', 'created_at']);
+            $table->unique(['document_id', 'sequence']);
         });
 
         PostgresGuards::protectAuditLog($name);

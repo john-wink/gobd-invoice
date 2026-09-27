@@ -5,9 +5,11 @@ declare(strict_types=1);
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use JohnWink\GobdInvoice\Database\PostgresGuards;
 use JohnWink\GobdInvoice\Database\Tenancy;
+use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Enums\KeyType;
 
 return new class extends Migration
@@ -97,7 +99,26 @@ return new class extends Migration
             $table->unique($tenant === null ? ['number'] : [$tenant, 'number']);
         });
 
+        $this->allowOneStornoPerDocument($name, $tenant);
+
         PostgresGuards::protectDocuments($name);
+    }
+
+    /**
+     * Storno statt Löschen, exactly once: a document has at most one Storno
+     * (per tenant). A partial unique index, which MySQL/MariaDB do not
+     * support; there the row lock of cancel() remains the only guard.
+     */
+    private function allowOneStornoPerDocument(string $name, ?string $tenant): void
+    {
+        if (! in_array(Schema::getConnection()->getDriverName(), ['pgsql', 'sqlite', 'sqlsrv'], true)) {
+            return;
+        }
+
+        $columns = implode(', ', [...($tenant === null ? [] : [$tenant]), 'source_document_id']);
+        $storno = DocumentType::Storno->value;
+
+        DB::statement("CREATE UNIQUE INDEX {$name}_one_storno_per_document ON {$name} ({$columns}) WHERE type = '{$storno}'");
     }
 
     public function down(): void
