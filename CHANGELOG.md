@@ -8,6 +8,54 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+### Fixed (0.2.0-rc.6)
+
+- **The line guard fails closed under row level security.** The trigger
+  `gobd_document_lines_guard()` asked whether the document of a line is
+  festgeschrieben and let the write pass when it could not see that
+  document. A session with its tenant context cleared or switched to another
+  team could delete the lines of a festgeschriebenes document; in a
+  single-tenant installation with the host's own row level security it could
+  also change them and add new ones. The trigger now requires the document as
+  a draft (or of a type that stays editable) that the session can see, for
+  the old and for the new row. A document the session cannot see counts as
+  festgeschrieben, as the partner row does in the Storno guard since rc.5.
+- **The line model guard fails closed.** `DocumentLine` read its document
+  through the host's global scopes and let the change pass when none came
+  back. It now reads the document without host scopes, like the Storno checks
+  of `Document`, and throws
+  `DocumentIsImmutableException::forUnreadableDocument()` when the document
+  still cannot be read (row level security, or a line without document).
+- Checked for the same pattern and unchanged, because they only look at the
+  written row (`OLD`/`NEW`) and never read another one:
+  `gobd_documents_guard()`, `gobd_documents_status_guard()`,
+  `gobd_number_sequences_guard()`, `gobd_audit_log_guard()` and the four
+  `*_refuse_truncate()` functions; in the model, the update and delete guards
+  of `Document`, `AuditLogEntry` and the Storno checks of `Document` (these
+  read the partner row as a requirement already). New tests run the line,
+  audit log and counter guards with the document hidden by row level
+  security (context cleared, context of another team) and in the own
+  context, and show that a document row the session cannot see is not
+  written at all.
+
+### Added (0.2.0-rc.6)
+
+- `DocumentIsImmutableException::forUnreadableDocument()`.
+
+### Upgrading from 0.2.0-rc.5
+
+1. PostgreSQL: call `PostgresGuards::protectLines('gobd_document_lines',
+   'gobd_documents')` again in a host migration. It replaces the function
+   `gobd_document_lines_guard()` (new body, same name and signature) and
+   recreates its trigger (`BEFORE INSERT OR UPDATE OR DELETE`, unchanged
+   definition) and `gobd_document_lines_refuse_truncate()` unchanged. No new
+   function, trigger, table or column.
+2. Row level security: change the lines of a draft only while the session
+   sees its document. A session that does not see the document now gets an
+   exception, also for the lines of a draft.
+3. A line whose document no longer exists can no longer be changed or
+   deleted, neither through the model nor on PostgreSQL through SQL.
+
 ### Fixed (0.2.0-rc.5)
 
 - **The Storno guard fails closed under row level security.** The deferred
