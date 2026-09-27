@@ -1,0 +1,77 @@
+name: kosit
+
+on:
+  push:
+    paths:
+      - "**.php"
+      - ".github/workflows/kosit.yml"
+      - ".github/kosit/**"
+      - "composer.json"
+  pull_request:
+    paths:
+      - "**.php"
+      - ".github/workflows/kosit.yml"
+      - ".github/kosit/**"
+      - "composer.json"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The e-invoices of the test set against the official KoSIT validator
+  # (Java) and its EN 16931 CII scenario: XML schema plus the CEN Schematron.
+  # Validator and configuration are pinned and checked by SHA-256 in
+  # .github/kosit/fetch.sh.
+  kosit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: KoSIT validator - EN 16931 CII
+    env:
+      GOBD_KOSIT_DIR: ${{ github.workspace }}/build/kosit
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo, simplexml
+          coverage: none
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:13.*" "orchestra/testbench:11.*" --no-interaction --no-update
+          composer update --prefer-stable --prefer-dist --no-interaction
+
+      - name: Fetch the KoSIT validator and configuration
+        run: bash .github/kosit/fetch.sh "$GOBD_KOSIT_DIR"
+
+      - name: Validate the examples
+        run: vendor/bin/pest --ci --fail-on-skipped --filter=KositValidationTest
+
+      - name: Validator result per example
+        if: always()
+        run: |
+          cat "$GOBD_KOSIT_DIR/reports/summary.txt"
+          {
+            echo "### KoSIT validator, EN 16931 CII"
+            echo '```'
+            cat "$GOBD_KOSIT_DIR/reports/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kosit-reports
+          path: build/kosit/reports
+          if-no-files-found: error
