@@ -145,6 +145,68 @@ function asDatabaseRole(string $role, Closure $work): mixed
     }
 }
 
+dataset('row security roles', [
+    'table owner under FORCE ROW LEVEL SECURITY' => 'owner',
+    'application role' => 'application',
+]);
+
+/**
+ * Run database work as a role that sees only the documents of the tenant in
+ * the session setting `gobd.tenant` — the row level security a host such as
+ * craftplan-next puts on the package tables. The role has no BYPASSRLS; as
+ * 'owner' it also owns the documents table, which FORCE ROW LEVEL SECURITY
+ * keeps under the policy. PostgreSQL only.
+ *
+ * @template TResult
+ *
+ * @param  Closure(): TResult  $work
+ * @return TResult
+ */
+function underTenantRowSecurity(string $role, Closure $work): mixed
+{
+    DB::statement(<<<'SQL'
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'gobd_tenant_app') THEN
+                CREATE ROLE gobd_tenant_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            END IF;
+        END
+        $$
+        SQL);
+    DB::statement('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gobd_tenant_app');
+    DB::statement('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gobd_tenant_app');
+    DB::statement('ALTER TABLE gobd_documents ENABLE ROW LEVEL SECURITY');
+    DB::statement('ALTER TABLE gobd_documents FORCE ROW LEVEL SECURITY');
+    DB::statement(<<<'SQL'
+        CREATE POLICY gobd_documents_of_tenant ON gobd_documents
+            USING (team_id::text = current_setting('gobd.tenant', true))
+            WITH CHECK (team_id::text = current_setting('gobd.tenant', true))
+        SQL);
+
+    if ($role === 'owner') {
+        DB::statement('ALTER TABLE gobd_documents OWNER TO gobd_tenant_app');
+    }
+
+    DB::statement('SET ROLE gobd_tenant_app');
+
+    try {
+        return $work();
+    } finally {
+        DB::statement('RESET ROLE');
+        enterTenantContext(null);
+    }
+}
+
+/**
+ * Set (or clear, with null) the tenant the session sees under
+ * {@see underTenantRowSecurity()}, for the session rather than the
+ * transaction — the way a host's runFor() sets and resets its context.
+ */
+function enterTenantContext(?string $tenant): void
+{
+    DB::select("SELECT set_config('gobd.tenant', ?, false)", [$tenant ?? '']);
+}
+
 /**
  * The chain ends of a document's audit trail: entries no other entry points
  * to. An intact trail has exactly one.
