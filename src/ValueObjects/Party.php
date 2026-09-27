@@ -25,6 +25,12 @@ final readonly class Party
         public ?string $vatId = null,
         // EN 16931 BT-43 (buyer) / BT-41 (seller) contact email address.
         public ?string $email = null,
+        // EN 16931 BT-29 (seller) / BT-46 (buyer) identifier, e.g. the supplier
+        // number the buyer assigned.
+        public ?string $identifier = null,
+        // EN 16931 BT-30 (seller) / BT-47 (buyer) legal registration
+        // identifier, e.g. the Handelsregisternummer.
+        public ?string $legalRegistrationId = null,
     ) {}
 
     /**
@@ -47,6 +53,8 @@ final readonly class Party
             $string('tax_number'),
             $string('vat_id'),
             $string('email'),
+            $string('identifier'),
+            $string('legal_registration_id'),
         );
     }
 
@@ -64,6 +72,8 @@ final readonly class Party
             'tax_number' => $this->taxNumber,
             'vat_id' => $this->vatId,
             'email' => $this->email,
+            'identifier' => $this->identifier,
+            'legal_registration_id' => $this->legalRegistrationId,
         ];
     }
 
@@ -84,6 +94,25 @@ final readonly class Party
         }
 
         return $this->isFilled($this->vatId);
+    }
+
+    /**
+     * The EN 16931 BT-29 seller identifier. With no identifier, legal
+     * registration (BT-30) or USt-IdNr (BT-31) at hand, the Steuernummer takes
+     * this place as well as BT-32: BR-CO-26 asks for one of BT-29/30/31 so the
+     * buyer can identify the seller, and BT-32 alone does not count.
+     */
+    public function sellerIdentifier(): ?string
+    {
+        if ($this->isFilled($this->identifier)) {
+            return $this->identifier;
+        }
+
+        if ($this->isFilled($this->legalRegistrationId) || $this->isFilled($this->vatId)) {
+            return null;
+        }
+
+        return $this->isFilled($this->taxNumber) ? $this->taxNumber : null;
     }
 
     private function isFilled(?string $value): bool

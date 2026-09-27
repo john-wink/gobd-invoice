@@ -70,6 +70,16 @@ final class GobdInvoiceServiceProvider extends PackageServiceProvider
             ]);
     }
 
+    /**
+     * The translations live in `lang/` at the package root; spatie's
+     * hasTranslations() only looks in `resources/lang/`, so the namespace is
+     * registered here as well.
+     */
+    public function packageBooted(): void
+    {
+        $this->loadTranslationsFrom(__DIR__.'/../lang', 'gobd-invoice');
+    }
+
     public function packageRegistered(): void
     {
         $this->app->singleton(
