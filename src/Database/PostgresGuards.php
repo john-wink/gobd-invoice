@@ -16,8 +16,12 @@ use JohnWink\GobdInvoice\Models\Document;
  * that go through Eloquent; these triggers also refuse raw statements, bulk
  * updates and any second application writing to the same tables:
  *
- * - a festgeschriebenes tax-relevant document keeps its §14 content, cannot be
- *   deleted and never returns to draft;
+ * - a festgeschriebenes tax-relevant document keeps its §14 content, its
+ *   retention and its host link, cannot be deleted and never returns to draft;
+ * - a status only moves along DocumentStatus::allowedTransitions(), and a
+ *   cancelled document keeps its status for good;
+ * - a festgeschriebener Storno and the cancelled document it references commit
+ *   together, and a Storno without that reference cannot be festgeschrieben;
  * - its lines cannot be added, changed or removed;
  * - the audit log is append-only;
  * - a number counter only moves forward and is never deleted;
@@ -83,6 +87,9 @@ final class PostgresGuards
                 RETURN NEW;
             END;
             SQL);
+
+        self::protectStatus($table);
+        self::pairStornoAndOriginal($table, $types);
     }
 
     public static function protectLines(string $lines, string $documents): void
@@ -193,8 +200,110 @@ final class PostgresGuards
 
         $table = self::identifier($table);
 
-        DB::statement("DROP FUNCTION IF EXISTS {$table}_guard() CASCADE");
-        DB::statement("DROP FUNCTION IF EXISTS {$table}_refuse_truncate() CASCADE");
+        foreach (['guard', 'status_guard', 'storno_guard', 'refuse_truncate'] as $function) {
+            DB::statement("DROP FUNCTION IF EXISTS {$table}_{$function}() CASCADE");
+        }
+    }
+
+    /**
+     * Every status the statement sets must be reachable by
+     * DocumentStatus::allowedTransitions(); a cancelled document keeps its
+     * status for good, so a second cancellation fails even when it would not
+     * change the value.
+     */
+    private static function protectStatus(string $table): void
+    {
+        $cancelled = DocumentStatus::Cancelled->value;
+        $transitions = self::allowedTransitionList();
+
+        DB::statement(<<<SQL
+            CREATE OR REPLACE FUNCTION {$table}_status_guard() RETURNS trigger LANGUAGE plpgsql AS \$guard\$
+            BEGIN
+                IF OLD.status = '{$cancelled}' THEN
+                    RAISE EXCEPTION 'gobd-invoice: document % is cancelled; its status is final', OLD.number;
+                END IF;
+
+                IF NEW.status IS DISTINCT FROM OLD.status AND (OLD.status || '>' || NEW.status) NOT IN ({$transitions}) THEN
+                    RAISE EXCEPTION 'gobd-invoice: document % cannot change its status from % to %', OLD.number, OLD.status, NEW.status;
+                END IF;
+
+                RETURN NEW;
+            END;
+            \$guard\$
+            SQL);
+        DB::statement("DROP TRIGGER IF EXISTS {$table}_status_guard ON {$table}");
+        DB::statement("CREATE TRIGGER {$table}_status_guard BEFORE UPDATE OF status ON {$table} FOR EACH ROW EXECUTE FUNCTION {$table}_status_guard()");
+    }
+
+    /**
+     * A Storno and the document it cancels commit together: a festgeschriebener
+     * Storno references a festgeschriebenes document of its tenant that is
+     * cancelled, and a festgeschriebenes tax-relevant document is cancelled
+     * only by such a Storno. Checked at commit (deferred), so the two rows may
+     * be written in either order within one transaction.
+     */
+    private static function pairStornoAndOriginal(string $table, string $types): void
+    {
+        $storno = DocumentType::Storno->value;
+        $cancelled = DocumentStatus::Cancelled->value;
+        $tenant = Tenancy::column();
+        $sameTenant = $tenant === null ? '' : "AND related.{$tenant} = checked.{$tenant}";
+
+        DB::statement(<<<SQL
+            CREATE OR REPLACE FUNCTION {$table}_storno_guard() RETURNS trigger LANGUAGE plpgsql AS \$guard\$
+            DECLARE
+                checked {$table}%ROWTYPE;
+            BEGIN
+                SELECT * INTO checked FROM {$table} WHERE id = NEW.id;
+
+                IF NOT FOUND OR checked.finalized_at IS NULL THEN
+                    RETURN NULL;
+                END IF;
+
+                IF checked.type = '{$storno}' AND NOT EXISTS (
+                    SELECT 1 FROM {$table} related
+                    WHERE related.id = checked.source_document_id
+                        AND related.finalized_at IS NOT NULL
+                        AND related.status = '{$cancelled}'
+                        {$sameTenant}
+                ) THEN
+                    RAISE EXCEPTION 'gobd-invoice: Storno % must reference a finalized document of its tenant, and that document must be cancelled', checked.number;
+                END IF;
+
+                IF checked.status = '{$cancelled}' AND checked.type IN ({$types}) AND NOT EXISTS (
+                    SELECT 1 FROM {$table} related
+                    WHERE related.source_document_id = checked.id
+                        AND related.type = '{$storno}'
+                        AND related.finalized_at IS NOT NULL
+                        {$sameTenant}
+                ) THEN
+                    RAISE EXCEPTION 'gobd-invoice: document % can only be cancelled by a finalized Storno that references it', checked.number;
+                END IF;
+
+                RETURN NULL;
+            END;
+            \$guard\$
+            SQL);
+        DB::statement("DROP TRIGGER IF EXISTS {$table}_storno_guard ON {$table}");
+        DB::statement(<<<SQL
+            CREATE CONSTRAINT TRIGGER {$table}_storno_guard AFTER INSERT OR UPDATE ON {$table}
+            DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+            WHEN (NEW.type = '{$storno}' OR NEW.status = '{$cancelled}')
+            EXECUTE FUNCTION {$table}_storno_guard()
+            SQL);
+    }
+
+    private static function allowedTransitionList(): string
+    {
+        $transitions = [];
+
+        foreach (DocumentStatus::cases() as $documentStatus) {
+            foreach ($documentStatus->allowedTransitions() as $target) {
+                $transitions[] = "'{$documentStatus->value}>{$target->value}'";
+            }
+        }
+
+        return implode(', ', $transitions);
     }
 
     private static function installRowGuard(string $table, string $timing, string $body): void

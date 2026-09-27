@@ -7,6 +7,7 @@ namespace JohnWink\GobdInvoice\Models;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Attributes\UseFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -23,6 +24,7 @@ use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Enums\KeyType;
 use JohnWink\GobdInvoice\Exceptions\DocumentIsImmutableException;
+use JohnWink\GobdInvoice\Exceptions\InvalidStatusTransitionException;
 use JohnWink\GobdInvoice\Models\Concerns\HasConfiguredKey;
 use Override;
 
@@ -101,12 +103,18 @@ class Document extends Model implements InvoiceDocument
         'net_total', 'vat_total', 'gross_total',
         // NOTE: paid_total, amount_due and status are intentionally NOT immutable —
         // payment tracking legitimately changes after Festschreibung (§14 content
-        // stays frozen; the payment ledger and status lifecycle move on).
+        // stays frozen; the payment ledger and status lifecycle move on). `meta`
+        // stays writable too: it is host bookkeeping (export markers, dunning
+        // notes), neither §14 content nor part of the hashed snapshot.
         'rounding_total', 'vat_accounting_total',
         'advances_net_total', 'advances_vat_total',
         'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
         'advance_deductions', 'seller', 'buyer',
         'issue_date', 'service_date', 'service_period_start', 'service_period_end', 'finalized_at', 'content_hash', 'finalized_payload',
+        // The §147 AO retention window is fixed at Festschreibung, and so is the
+        // host record (order, customer) the document was issued for.
+        'retention_class', 'retention_until', 'is_financial_sector',
+        'documentable_type', 'documentable_id',
     ];
 
     public function __construct(array $attributes = [])
@@ -219,6 +227,8 @@ class Document extends Model implements InvoiceDocument
     {
         static::updating(static function (self $document): void {
             Tenancy::guardAgainstTenantChange($document);
+            $document->guardStatusTransition();
+            $document->guardStornoFinalization();
 
             if ($document->getOriginal('finalized_at') === null) {
                 return; // still a draft (or being finalized now): editing is allowed
@@ -250,6 +260,67 @@ class Document extends Model implements InvoiceDocument
                 throw DocumentIsImmutableException::forFinalizedDocument((string) $document->number);
             }
         });
+    }
+
+    /**
+     * A status only moves along {@see DocumentStatus::allowedTransitions()};
+     * a festgeschriebenes tax-relevant document becomes cancelled only once a
+     * festgeschriebener Storno references it.
+     */
+    private function guardStatusTransition(): void
+    {
+        $original = $this->getRawOriginal('status');
+        $from = is_string($original) ? DocumentStatus::tryFrom($original) : null;
+
+        if (! $this->isDirty('status') || ! $from instanceof DocumentStatus) {
+            return;
+        }
+
+        throw_unless($from->canTransitionTo($this->status), InvalidStatusTransitionException::between($from, $this->status));
+
+        if ($this->status === DocumentStatus::Cancelled && $this->isImmutable()) {
+            $stornos = $this->relatedDocuments()
+                ->where('source_document_id', $this->getKey())
+                ->where('type', DocumentType::Storno->value)
+                ->whereNotNull('finalized_at');
+
+            throw_unless($stornos->exists(), InvalidStatusTransitionException::cancelledWithoutStorno((string) $this->number));
+        }
+    }
+
+    /**
+     * A Storno is festgeschrieben only against the festgeschriebene document
+     * of its own tenant that it cancels.
+     */
+    private function guardStornoFinalization(): void
+    {
+        if ($this->type !== DocumentType::Storno || $this->finalized_at === null || $this->getOriginal('finalized_at') !== null) {
+            return;
+        }
+
+        $source = $this->source_document_id === null ? null : $this->relatedDocuments()
+            ->whereKey($this->source_document_id)
+            ->whereNotNull('finalized_at');
+
+        throw_unless($source?->exists() === true, InvalidStatusTransitionException::stornoWithoutSource());
+    }
+
+    /**
+     * The documents of this document's tenant (all of them single-tenant),
+     * independent of any host scope.
+     *
+     * @return Builder<static>
+     */
+    private function relatedDocuments(): Builder
+    {
+        $builder = $this->newQueryWithoutScopes();
+        $column = Tenancy::column();
+
+        if ($column !== null) {
+            $builder->where($column, $this->tenantKey());
+        }
+
+        return $builder;
     }
 
     /**
