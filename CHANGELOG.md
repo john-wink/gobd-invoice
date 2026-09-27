@@ -8,12 +8,68 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
-## [0.2.1] - Unreleased (0.2.1-rc.1: 2026-09-27)
+## [0.2.1] - Unreleased (0.2.1-rc.1, 0.2.1-rc.2: 2026-09-27)
 
 Closes the gaps a host found while building invoices on 0.2.0: a document
 type for the kaufmännische Gutschrift, overdue without sending, advances in
 payments, a Belegnachlass over several rates and a seller known only by its
 Steuernummer.
+
+### Fixed (0.2.1-rc.2)
+
+- **A line write waits for a running Festschreibung and is refused.** The
+  trigger `gobd_document_lines_guard()` read the document of the line
+  without a lock. Under READ COMMITTED a line changed, added or deleted
+  while another connection festschrieb its document still saw the draft
+  and went through without waiting; the document was then festgeschrieben
+  with a line that changed under it. The trigger now reads the document
+  `FOR SHARE`, for the old and for the new document of the line: the write
+  waits for the Festschreibung, is judged by the committed row and refused.
+  Proven with two connections on PostgreSQL 18 for update, insert and
+  delete; without `FOR SHARE` (on either read) the test fails.
+- Checked for the same pattern and unchanged: `gobd_documents_storno_guard()`
+  reads its partner row without a lock, but only as a requirement on states
+  that never go back (festgeschrieben, cancelled), so a stale read can only
+  refuse, never let a forbidden write pass; `gobd_documents_guard()`,
+  `gobd_documents_status_guard()`, `gobd_number_sequences_guard()` and
+  `gobd_audit_log_guard()` read no other row. The tenant check of the line
+  guard reads the tenant of the document, which is immutable. Payments are
+  columns of the document and `recordPayment()` locks the row already.
+
+### Added (0.2.1-rc.2)
+
+- **The official KoSIT validator in CI.** The job `kosit` validates a
+  Rechnung, a Rechnungskorrektur (381 with BT-25), a Storno (381 with BT-25)
+  and a Schlussrechnung with two Abschlagsrechnungen against the EN 16931
+  CII scenario of the KoSIT validator (XML schema and CEN Schematron) and
+  prints the result per example. `.github/kosit/fetch.sh` downloads
+  validator 1.6.3 and configuration v2026-08-31 (XRechnung 3.0.2, CEN
+  Schematron 1.3.16) from itplr-kosit and checks both by SHA-256; with Java
+  the same runs locally:
+  `bash .github/kosit/fetch.sh build/kosit` and
+  `GOBD_KOSIT_DIR=build/kosit vendor/bin/pest --filter=KositValidationTest`.
+  All four examples are accepted without errors or warnings; no change to
+  the serializer was needed.
+
+### Upgrading from 0.2.1-rc.1
+
+1. **PostgreSQL:** call `PostgresGuards::protectLines('gobd_document_lines',
+   'gobd_documents')` again in a host migration (a host that set the guard
+   in its own migration, such as craftplan-next, adds a new one after it).
+   It replaces the function `gobd_document_lines_guard()` (new body, same
+   name and signature) and recreates its trigger (`BEFORE INSERT OR UPDATE
+   OR DELETE`, unchanged definition) and
+   `gobd_document_lines_refuse_truncate()` unchanged. No new function,
+   trigger, table or column; the package migrations create new tables with
+   it.
+2. `FOR SHARE` needs the `UPDATE` privilege on `gobd_documents` for the
+   role that writes lines, and under row level security the document must
+   pass the `UPDATE` policy as well as the `SELECT` policy. A document the
+   session may not update counts as festgeschrieben: its lines are refused.
+3. Two transactions that each write a line of the same draft first and the
+   draft itself afterwards now take the share lock before the row lock and
+   can deadlock; PostgreSQL aborts one of them. Write the document before
+   its lines in one transaction, as `updateDraft()` does.
 
 ### Added
 
