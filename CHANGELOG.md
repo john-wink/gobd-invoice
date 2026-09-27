@@ -8,6 +8,70 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+### Fixed (0.2.0-rc.4)
+
+- **One Storno per document, also under concurrency.** `cancel()` locks the
+  original (`SELECT … FOR UPDATE`) and re-checks its status under the lock, so
+  of N cancellations at the same moment exactly one issues a Storno and N−1 are
+  refused (`already cancelled`) without burning a Storno number. A partial
+  unique index allows at most one Storno per (tenant,) `source_document_id`,
+  and on PostgreSQL a cancelled document can no longer be set to `cancelled`
+  again. Proven with 12 forked processes, 5 runs.
+- **Status transitions follow the positive list below the model.**
+  `DocumentStatus::allowedTransitions()` is enforced by the model and by a
+  PostgreSQL trigger. A festgeschriebenes tax-relevant document becomes
+  `cancelled` only together with a festgeschriebenen Storno that references it;
+  a Storno without that reference (or against another tenant's document) can
+  no longer be festgeschrieben; and once a Storno is festgeschrieben its
+  original is `cancelled` — checked at commit by a deferred constraint trigger,
+  tested as table owner and as a DML-only application role.
+- **The audit chain is deterministic.** Every entry carries its position
+  (`sequence`, 1…n per document); `append()` locks the document row, a unique
+  (`document_id`, `sequence`) index backs it up, and `verify()` reads the chain
+  in that order. 12 parallel appends leave exactly one chain end.
+- **`recordPayment()` is atomic.** It locks and re-reads the document before
+  adding the payment, so parallel or stale-instance payments add up.
+- **`verify()` stays true after a payment.** `paid_total` and `amount_due` are
+  no longer part of the hashed snapshot; a snapshot finalized by an earlier
+  release still verifies (its payment fields are ignored).
+- **Retention and host link are frozen at Festschreibung.** `retention_until`,
+  `retention_class`, `is_financial_sector`, `documentable_type` and
+  `documentable_id` join the immutable columns (model and trigger). `meta`
+  stays writable: it is host bookkeeping, not §14 content, and not hashed.
+
+### Changed (0.2.0-rc.4)
+
+- The audit hash also covers the entry's `sequence`, `actor` and tenant, so
+  rewriting who acted or reordering entries is detected. `created_at` stays
+  out: its round trip depends on the connection's session time zone.
+- `finalize()` on a Storno drafted against a document cancels that document in
+  the same transaction (audit entry `cancelled`, event `DocumentCancelled`) and
+  consults `SegregationPolicy::assertCanCancel()` for it.
+- A `paid` document can no longer be cancelled: the positive list has no
+  `paid → cancelled` transition, and `cancel()` now refuses it with an
+  `InvalidStatusTransitionException` instead of writing it.
+- New named constructors `InvalidStatusTransitionException::cancelledWithoutStorno()`
+  and `::stornoWithoutSource()`.
+
+### Upgrading from 0.2.0-rc.3
+
+The package migrations create new tables with all of this. A host whose tables
+were created by rc.1–rc.3 adds in its own migration:
+
+1. Audit log: column `sequence` (unsigned integer, NOT NULL, filled 1…n per
+   `document_id` in chain order) and a unique index on
+   (`document_id`, `sequence`).
+2. Documents: the partial unique index
+   `CREATE UNIQUE INDEX gobd_documents_one_storno_per_document ON gobd_documents ([team_id, ]source_document_id) WHERE type = 'storno'`
+   (PostgreSQL, SQLite, SQL Server; MySQL/MariaDB have no partial indexes and
+   rely on the row lock of `cancel()`).
+3. PostgreSQL: call `PostgresGuards::protectDocuments('gobd_documents')` again.
+   It replaces `gobd_documents_guard()` and adds the triggers
+   `gobd_documents_status_guard` and `gobd_documents_storno_guard`.
+
+Audit entries written by rc.1–rc.3 were hashed without position, actor and
+tenant and do not verify under rc.4; pre-release data has to be recreated.
+
 ### Added
 
 - **PostgreSQL is a proven target (0.2.0-rc.1).** The whole suite runs against
