@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\DB;
+use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Exceptions\DocumentIsImmutableException;
@@ -31,6 +33,47 @@ it('records a partial then a full payment and advances the status', function ():
     $invoice->refresh();
     expect($invoice->status)->toBe(DocumentStatus::Paid)
         ->and((int) $invoice->amount_due)->toBe(0);
+});
+
+it('still verifies a finalized document after payments were recorded', function (): void {
+    $invoice = finalizedFor();
+
+    GobdInvoice::recordPayment($invoice, 5_000);
+    $partiallyPaid = GobdInvoice::verify($invoice->fresh());
+
+    GobdInvoice::recordPayment($invoice, (int) $invoice->gross_total - 5_000);
+
+    expect($partiallyPaid)->toBeTrue()
+        ->and($invoice->fresh()?->status)->toBe(DocumentStatus::Paid)
+        ->and(GobdInvoice::verify($invoice->fresh()))->toBeTrue();
+});
+
+it('keeps verifying a document whose snapshot still carries the payment fields', function (): void {
+    $invoice = finalizedFor();
+    $legacyPayload = [...(array) $invoice->finalized_payload, 'paid_total' => 0, 'amount_due' => $invoice->gross_total];
+
+    tamperBypassingDatabaseGuards(static function () use ($invoice, $legacyPayload): void {
+        DB::table('gobd_documents')->where('id', $invoice->id)->update([
+            'finalized_payload' => json_encode($legacyPayload),
+            'content_hash' => app(ContentHasher::class)->hash($legacyPayload),
+        ]);
+    });
+
+    GobdInvoice::recordPayment($invoice, 5_000);
+
+    expect(GobdInvoice::verify($invoice->fresh()))->toBeTrue();
+});
+
+it('books a payment on the current state, not on a stale instance', function (): void {
+    $invoice = finalizedFor();
+    $stale = Document::query()->findOrFail($invoice->id);
+
+    GobdInvoice::recordPayment($invoice, 1_000);
+    GobdInvoice::recordPayment($stale, 2_000);
+
+    expect($invoice->fresh()?->paid_total)->toBe(3_000)
+        ->and($invoice->fresh()?->amount_due)->toBe((int) $invoice->gross_total - 3_000)
+        ->and($stale->paid_total)->toBe(3_000);
 });
 
 it('marks a finalized document as sent', function (): void {

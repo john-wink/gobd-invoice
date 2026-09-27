@@ -61,6 +61,27 @@ it('blocks mutation of a finalized document (GoBD Unveränderbarkeit)', function
     expect(fn () => $document->save())->toThrow(DocumentIsImmutableException::class);
 });
 
+it('blocks changes to the retention and host link of a finalized document', function (string $column, bool|int|string $value): void {
+    $document = GobdInvoice::finalize(draftInvoice());
+    $document->setAttribute($column, $value);
+
+    expect(fn () => $document->save())->toThrow(DocumentIsImmutableException::class);
+})->with([
+    'retention until' => ['retention_until', '2099-12-31'],
+    'retention class' => ['retention_class', 'correspondence'],
+    'financial sector' => ['is_financial_sector', true],
+    'documentable type' => ['documentable_type', 'order'],
+    'documentable id' => ['documentable_id', 7],
+]);
+
+it('keeps the host metadata of a finalized document writable', function (): void {
+    $document = GobdInvoice::finalize(draftInvoice());
+    $document->meta = ['exported' => true];
+    $document->save();
+
+    expect($document->fresh()?->meta)->toBe(['exported' => true]);
+});
+
 it('still allows lifecycle status changes after finalization', function (): void {
     $document = GobdInvoice::finalize(draftInvoice());
     $document->status = DocumentStatus::Paid;

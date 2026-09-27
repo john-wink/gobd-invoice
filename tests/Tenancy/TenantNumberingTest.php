@@ -77,7 +77,7 @@ it('stamps the document tenant on its lines, its audit entries and its counter',
 
 it('numbers a Storno in the tenant of the cancelled invoice', function (): void {
     $teamA = newTenant();
-    GobdInvoice::finalize(tenantDraft(newTenant(), DocumentType::Storno));
+    GobdInvoice::cancel(GobdInvoice::finalize(tenantDraft(newTenant())), 'anderes Team');
     $invoice = GobdInvoice::finalize(tenantDraft($teamA));
 
     $storno = GobdInvoice::cancel($invoice, 'Kunde hat storniert');
