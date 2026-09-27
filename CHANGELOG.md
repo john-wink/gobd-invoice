@@ -40,6 +40,8 @@ Pre-1.0: the public API may still change between minor versions.
 
 ### Added (0.2.0-rc.6)
 
+- The published config carries the key `timezone` (default `null` = the app
+  time zone, `app.timezone`). rc.5 read the key but did not ship it.
 - `DocumentIsImmutableException::forUnreadableDocument()`.
 
 ### Upgrading from 0.2.0-rc.5
@@ -55,6 +57,7 @@ Pre-1.0: the public API may still change between minor versions.
    exception, also for the lines of a draft.
 3. A line whose document no longer exists can no longer be changed or
    deleted, neither through the model nor on PostgreSQL through SQL.
+4. Optional: add `'timezone' => null` to a published `config/gobd-invoice.php`.
 
 ### Fixed (0.2.0-rc.5)
 
