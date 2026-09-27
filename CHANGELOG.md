@@ -8,12 +8,219 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+### Fixed (0.2.0-rc.6)
+
+- **The line guard fails closed under row level security.** The trigger
+  `gobd_document_lines_guard()` asked whether the document of a line is
+  festgeschrieben and let the write pass when it could not see that
+  document. A session with its tenant context cleared or switched to another
+  team could delete the lines of a festgeschriebenes document; in a
+  single-tenant installation with the host's own row level security it could
+  also change them and add new ones. The trigger now requires the document as
+  a draft (or of a type that stays editable) that the session can see, for
+  the old and for the new row. A document the session cannot see counts as
+  festgeschrieben, as the partner row does in the Storno guard since rc.5.
+- **The line model guard fails closed.** `DocumentLine` read its document
+  through the host's global scopes and let the change pass when none came
+  back. It now reads the document without host scopes, like the Storno checks
+  of `Document`, and throws
+  `DocumentIsImmutableException::forUnreadableDocument()` when the document
+  still cannot be read (row level security, or a line without document).
+- Checked for the same pattern and unchanged, because they only look at the
+  written row (`OLD`/`NEW`) and never read another one:
+  `gobd_documents_guard()`, `gobd_documents_status_guard()`,
+  `gobd_number_sequences_guard()`, `gobd_audit_log_guard()` and the four
+  `*_refuse_truncate()` functions; in the model, the update and delete guards
+  of `Document`, `AuditLogEntry` and the Storno checks of `Document` (these
+  read the partner row as a requirement already). New tests run the line,
+  audit log and counter guards with the document hidden by row level
+  security (context cleared, context of another team) and in the own
+  context, and show that a document row the session cannot see is not
+  written at all.
+
+### Added (0.2.0-rc.6)
+
+- The published config carries the key `timezone` (default `null` = the app
+  time zone, `app.timezone`). rc.5 read the key but did not ship it.
+- `DocumentIsImmutableException::forUnreadableDocument()`.
+
+### Upgrading from 0.2.0-rc.5
+
+1. PostgreSQL: call `PostgresGuards::protectLines('gobd_document_lines',
+   'gobd_documents')` again in a host migration. It replaces the function
+   `gobd_document_lines_guard()` (new body, same name and signature) and
+   recreates its trigger (`BEFORE INSERT OR UPDATE OR DELETE`, unchanged
+   definition) and `gobd_document_lines_refuse_truncate()` unchanged. No new
+   function, trigger, table or column.
+2. Row level security: change the lines of a draft only while the session
+   sees its document. A session that does not see the document now gets an
+   exception, also for the lines of a draft.
+3. A line whose document no longer exists can no longer be changed or
+   deleted, neither through the model nor on PostgreSQL through SQL.
+4. Optional: add `'timezone' => null` to a published `config/gobd-invoice.php`.
+
+### Fixed (0.2.0-rc.5)
+
+- **The Storno guard fails closed under row level security.** The deferred
+  check `gobd_documents_storno_guard()` re-read its own row and let the write
+  pass when it could not see it. A host that resets its tenant context before
+  the commit (or switches it to another team) hid that row, and all three
+  forbidden writes went through: a festgeschriebenes document cancelled
+  without a Storno, a Storno without a source, and a Storno whose original is
+  not cancelled. The check now takes the row from the trigger (`NEW`) and
+  reads only the partner row, as a requirement: a partner the session cannot
+  see counts as missing and the commit fails. Tested under FORCE ROW LEVEL
+  SECURITY as table owner and as an application role without BYPASSRLS, with
+  the context cleared and switched to another team before the commit.
+  No `SECURITY DEFINER`: under FORCE ROW LEVEL SECURITY the table owner sees
+  no more than the session, and a package cannot grant BYPASSRLS.
+- **A Storno is dated on the business day.** `cancel()` accepts the issue date
+  as a third argument (`DateTimeInterface|string|null`). Without it, the
+  Storno — like any document finalized without an issue date — is dated today
+  in the package time zone, which also picks the year of its number. At
+  2026-12-31 23:30 UTC with `Europe/Berlin` that is 2027-01-01 and a number of
+  2027, no longer 2026-12-31.
+- **A payment without date is booked on the business day.** `recordPayment()`
+  without `$paidAt` writes today in the package time zone as `paid_at`, not
+  the UTC day. An explicit `$paidAt` is kept as given.
+- **Unsaved changes are no longer dropped.** `recordPayment()` and `cancel()`
+  lock and re-read the document. On an instance with unsaved changes that
+  re-read overwrote them silently; they now throw a `GobdInvoiceException`
+  naming the changed attributes and leave the instance as it was.
+
+### Added (0.2.0-rc.5)
+
+- Config key `gobd-invoice.timezone` (default `null` = `app.timezone`): the
+  time zone of the business day for issue dates and payment dates.
+
+### Upgrading from 0.2.0-rc.4
+
+1. PostgreSQL: call `PostgresGuards::protectDocuments('gobd_documents')` again
+   in a host migration. It replaces the function
+   `gobd_documents_storno_guard()` (new body, same name and signature) and
+   recreates its constraint trigger `gobd_documents_storno_guard`
+   (`AFTER INSERT OR UPDATE`, `DEFERRABLE INITIALLY DEFERRED`, unchanged
+   definition); `gobd_documents_guard()`, `gobd_documents_status_guard()`,
+   `gobd_documents_refuse_truncate()` and their triggers are recreated
+   unchanged. No new function, trigger, table or column.
+2. Row level security: commit a Storno and its original while the session
+   still sees both rows. A host that resets its tenant context before the
+   commit now gets an exception at commit instead of a silent pass, also for
+   a correct Storno.
+3. Set `gobd-invoice.timezone` in the published config when the business day
+   is not the app time zone (e.g. `'Europe/Berlin'` on a UTC app).
+4. Pass the issue date to `cancel()` where the host already knows it, and save
+   or discard changes on a document before `recordPayment()` or `cancel()`.
+
+### Fixed (0.2.0-rc.4)
+
+- **One Storno per document, also under concurrency.** `cancel()` locks the
+  original (`SELECT … FOR UPDATE`) and re-checks its status under the lock, so
+  of N cancellations at the same moment exactly one issues a Storno and N−1 are
+  refused (`already cancelled`) without burning a Storno number. A partial
+  unique index allows at most one Storno per (tenant,) `source_document_id`,
+  and on PostgreSQL a cancelled document can no longer be set to `cancelled`
+  again. Proven with 12 forked processes, 5 runs.
+- **Status transitions follow the positive list below the model.**
+  `DocumentStatus::allowedTransitions()` is enforced by the model and by a
+  PostgreSQL trigger. A festgeschriebenes tax-relevant document becomes
+  `cancelled` only together with a festgeschriebenen Storno that references it;
+  a Storno without that reference (or against another tenant's document) can
+  no longer be festgeschrieben; and once a Storno is festgeschrieben its
+  original is `cancelled` — checked at commit by a deferred constraint trigger,
+  tested as table owner and as a DML-only application role.
+- **The audit chain is deterministic.** Every entry carries its position
+  (`sequence`, 1…n per document); `append()` locks the document row, a unique
+  (`document_id`, `sequence`) index backs it up, and `verify()` reads the chain
+  in that order. 12 parallel appends leave exactly one chain end.
+- **`recordPayment()` is atomic.** It locks and re-reads the document before
+  adding the payment, so parallel or stale-instance payments add up.
+- **`verify()` stays true after a payment.** `paid_total` and `amount_due` are
+  no longer part of the hashed snapshot; a snapshot finalized by an earlier
+  release still verifies (its payment fields are ignored).
+- **Retention and host link are frozen at Festschreibung.** `retention_until`,
+  `retention_class`, `is_financial_sector`, `documentable_type` and
+  `documentable_id` join the immutable columns (model and trigger). `meta`
+  stays writable: it is host bookkeeping, not §14 content, and not hashed.
+
+### Changed (0.2.0-rc.4)
+
+- The audit hash also covers the entry's `sequence`, `actor` and tenant, so
+  rewriting who acted or reordering entries is detected. `created_at` stays
+  out: its round trip depends on the connection's session time zone.
+- `finalize()` on a Storno drafted against a document cancels that document in
+  the same transaction (audit entry `cancelled`, event `DocumentCancelled`) and
+  consults `SegregationPolicy::assertCanCancel()` for it.
+- A `paid` document can no longer be cancelled: the positive list has no
+  `paid → cancelled` transition, and `cancel()` now refuses it with an
+  `InvalidStatusTransitionException` instead of writing it.
+- New named constructors `InvalidStatusTransitionException::cancelledWithoutStorno()`
+  and `::stornoWithoutSource()`.
+
+### Upgrading from 0.2.0-rc.3
+
+The package migrations create new tables with all of this. A host whose tables
+were created by rc.1–rc.3 adds in its own migration:
+
+1. Audit log: column `sequence` (unsigned integer, NOT NULL, filled 1…n per
+   `document_id` in chain order) and a unique index on
+   (`document_id`, `sequence`).
+2. Documents: the partial unique index
+   `CREATE UNIQUE INDEX gobd_documents_one_storno_per_document ON gobd_documents ([team_id, ]source_document_id) WHERE type = 'storno'`
+   (PostgreSQL, SQLite, SQL Server; MySQL/MariaDB have no partial indexes and
+   rely on the row lock of `cancel()`).
+3. PostgreSQL: call `PostgresGuards::protectDocuments('gobd_documents')` again.
+   It replaces `gobd_documents_guard()` and adds the triggers
+   `gobd_documents_status_guard` and `gobd_documents_storno_guard`.
+
+Audit entries written by rc.1–rc.3 were hashed without position, actor and
+tenant and do not verify under rc.4; pre-release data has to be recreated.
+
 ### Added
 
+- **PostgreSQL is a proven target (0.2.0-rc.1).** The whole suite runs against
+  PostgreSQL 18 in a second CI job. Parallel-process concurrency tests fork 24 OS
+  processes that festschreiben at the same instant — one counter, and two
+  tenants side by side, each repeated 10 times — and assert a gapless,
+  duplicate-free sequence. The gapless generator's row lock is proven: removing
+  `lockForUpdate()` makes the test fail on every run.
+- **Multi-tenancy (`gobd-invoice.tenancy.column`).** Set to a column such as
+  `team_id`, every package table carries it (NOT NULL), each tenant runs its own
+  counters and a number is unique per tenant — **`UNIQUE(team_id, number)`** in
+  the database instead of a mandatory tenant prefix in the format. `draft()`
+  needs the tenant in its attributes; Storno, conversion and Mahnung inherit it,
+  lines and audit entries are stamped with it, a row never changes its tenant,
+  and an advance of another tenant can never be deducted.
+- **UUID keys (`gobd-invoice.database.key_type = uuid`).** All package tables,
+  the document references and the `documentable` morph can be keyed by UUIDv7.
+- **PostgreSQL guard triggers.** On PostgreSQL the migrations install triggers
+  that enforce Festschreibung below the model layer: a finalized tax-relevant
+  document keeps its §14 content, cannot be deleted or returned to draft; its
+  lines cannot be added, changed or removed; the audit log is append-only; a
+  number counter never runs backwards and is never deleted; TRUNCATE is refused;
+  and with tenancy no row changes its tenant and a line always belongs to its
+  document's tenant.
+- **Guarded tenant columns (0.2.0-rc.2).** The package never mass-assigns the
+  tenant column; it sets it on lines, counters and audit entries itself. A host
+  subclass can therefore keep `team_id` out of mass assignment
+  (`$guarded = ['team_id']`), even under `preventSilentlyDiscardingAttributes`.
+- **Host line attributes.** `DocumentLine::passthroughAttributes()` names
+  host-owned line columns (e.g. a catalogue reference or `price_snapshot_at`)
+  that `draft()` stores and `convert()`/`cancel()` carry forward.
 - **`GobdInvoice::updateDraft($document, $attributes, $lines)`** — edit an
   unfinalized draft in place: re-applies the draft attributes and replaces its
   line items. Throws for a finalized document (Unveränderbarkeit). Lets a host
   UI offer an edit mode for drafts before Festschreibung.
+
+### Changed (breaking for 0.1 installations)
+
+- `NumberSequenceGenerator::next()` takes the tenant as a fourth parameter, and
+  the overridable `sequenceKeys()` / `formatFor()` receive it too.
+- The migrations use `jsonb` and `timestamptz` (`timestampsTz`) and key the
+  unique number index by tenant when tenancy is enabled. Existing 0.1 tables are
+  not migrated by the package; a 0.1 host upgrades its own schema.
+- The models are `#[Unguarded]` instead of `$guarded = []` (same behaviour, also
+  for host subclasses).
 
 ### Fixed
 
@@ -22,6 +229,13 @@ Pre-1.0: the public API may still change between minor versions.
   infers `<subclass>_id` from the parent class name), and `source()` links to
   `static::class` — so a host subclass (e.g. a multi-tenant `Document`) keeps the
   package's schema. This is required for the advertised swappable-models pattern.
+- **Hosts with immutable dates (0.2.0-rc.3).** A host that sets
+  `Date::use(CarbonImmutable::class)` could neither draft a document with a date
+  nor finalize one: `parseDate()` and the retention window were typed to the
+  mutable `Illuminate\Support\Carbon` and threw a `TypeError`, and the virtual
+  `due_date` silently returned `null`. Dates are now typed as `CarbonInterface`
+  throughout (`recordPayment()` accepts any Carbon instance), so the host's
+  date class is used as it is.
 
 ## [0.1.0] - 2026-07-11
 

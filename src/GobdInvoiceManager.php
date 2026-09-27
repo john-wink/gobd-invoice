@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice;
 
+use Carbon\CarbonInterface;
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -27,8 +28,10 @@ use JohnWink\GobdInvoice\Contracts\EInvoiceValidator;
 use JohnWink\GobdInvoice\Contracts\GobdDataExporter;
 use JohnWink\GobdInvoice\Contracts\NumberSequenceGenerator;
 use JohnWink\GobdInvoice\Contracts\SegregationPolicy;
+use JohnWink\GobdInvoice\Database\Tenancy;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
+use JohnWink\GobdInvoice\Enums\KeyType;
 use JohnWink\GobdInvoice\Enums\PriceMode;
 use JohnWink\GobdInvoice\Enums\TaxCategory;
 use JohnWink\GobdInvoice\Events\DocumentCancelled;
@@ -66,6 +69,14 @@ use JohnWink\GobdInvoice\ValueObjects\TotalsInput;
  */
 final readonly class GobdInvoiceManager
 {
+    /**
+     * Columns that move on after Festschreibung as payments come in; they are
+     * not part of the hashed snapshot.
+     *
+     * @var list<string>
+     */
+    private const array PAYMENT_STATE = ['paid_total', 'amount_due'];
+
     public function __construct(
         private NumberSequenceGenerator $numberSequenceGenerator,
         private DocumentTotalsCalculator $documentTotalsCalculator,
@@ -105,6 +116,7 @@ final readonly class GobdInvoiceManager
         $currency = $this->toStringValue($attributes['currency'] ?? null, Config::string('gobd-invoice.currency', 'EUR'));
 
         $document = new $model;
+        $this->assignTenant($document, $attributes);
         $document->type = $documentType;
         $document->status = DocumentStatus::Draft;
         $document->currency = $currency;
@@ -139,18 +151,17 @@ final readonly class GobdInvoiceManager
         } elseif (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
             // Raw morph columns, e.g. carried forward by convert() without a Model.
             $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
-            $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
+            $document->documentable_id = KeyType::configured()->normalize($attributes['documentable_id'], 'documentable_id');
         }
 
         if (isset($attributes['source_document_id'])) {
-            $document->source_document_id = $this->toIntOrFail($attributes['source_document_id'], 'source_document_id');
+            $document->source_document_id = KeyType::configured()->normalize($attributes['source_document_id'], 'source_document_id');
         }
 
         $document->advance_deductions = $this->resolveAdvanceDeductions(
             $attributes['deducts'] ?? null,
             $currency,
-            $document->documentable_type,
-            $document->documentable_id,
+            $document,
         );
 
         if (isset($attributes['meta']) && is_array($attributes['meta'])) {
@@ -164,9 +175,7 @@ final readonly class GobdInvoiceManager
 
         $document->save();
 
-        foreach (array_values($lines) as $index => $line) {
-            $document->lines()->create($this->buildLineAttributes($index + 1, $line, $currency));
-        }
+        $this->createLines($document, $lines, $currency);
 
         $document->load('lines');
 
@@ -219,7 +228,7 @@ final readonly class GobdInvoiceManager
             }
             if (isset($attributes['documentable_type'], $attributes['documentable_id'])) {
                 $document->documentable_type = $this->toStringValue($attributes['documentable_type']);
-                $document->documentable_id = $this->toIntOrFail($attributes['documentable_id'], 'documentable_id');
+                $document->documentable_id = KeyType::configured()->normalize($attributes['documentable_id'], 'documentable_id');
             }
 
             // Advance deductions (Schlussrechnung) are re-resolvable while the
@@ -230,8 +239,7 @@ final readonly class GobdInvoiceManager
                 $document->advance_deductions = $this->resolveAdvanceDeductions(
                     $attributes['deducts'],
                     $currency,
-                    $document->documentable_type,
-                    $document->documentable_id,
+                    $document,
                 );
             }
 
@@ -240,9 +248,7 @@ final readonly class GobdInvoiceManager
 
             // Replace the line items (a draft carries no legal identity yet).
             $document->lines()->delete();
-            foreach (array_values($lines) as $index => $line) {
-                $document->lines()->create($this->buildLineAttributes($index + 1, $line, $currency));
-            }
+            $this->createLines($document, $lines, $currency);
         });
 
         $document->load('lines');
@@ -266,7 +272,28 @@ final readonly class GobdInvoiceManager
         // and finalizes the Storno, would trip the four-eyes rule on themselves).
         $this->segregationPolicy->assertCanFinalize($document, $this->actorResolver->resolve());
 
-        return $this->performFinalize($document);
+        if ($document->type !== DocumentType::Storno || $document->source_document_id === null) {
+            return $this->performFinalize($document);
+        }
+
+        // A Storno drafted by the host against a document cancels that document
+        // when it is festgeschrieben — the same pairing cancel() produces.
+        $original = $this->documentsOfTenant($document)->find($document->source_document_id);
+
+        throw_unless($original instanceof Document, InvalidStatusTransitionException::stornoWithoutSource());
+
+        $meta = $document->meta ?? [];
+        $reason = isset($meta['reason']) && is_string($meta['reason']) ? $meta['reason'] : null;
+
+        DB::transaction(function () use ($original, $document, $reason): void {
+            $this->lockForCancellation($original);
+            $this->performFinalize($document);
+            $this->markCancelled($original, $document, $reason);
+        });
+
+        event(new DocumentCancelled($original, $document));
+
+        return $document;
     }
 
     /**
@@ -279,20 +306,26 @@ final readonly class GobdInvoiceManager
     public function verify(Document $document): bool
     {
         $contentHash = $document->content_hash;
+        $payload = $document->finalized_payload;
 
-        if ($document->finalized_payload === null || $contentHash === null) {
+        if ($payload === null || $contentHash === null) {
             return false;
         }
 
         // (1) The frozen snapshot is internally consistent with its hash.
-        if (! hash_equals($contentHash, $this->contentHasher->hash($document->finalized_payload))) {
+        if (! hash_equals($contentHash, $this->contentHasher->hash($payload))) {
             return false;
         }
 
         // (2) The live document and its lines still reconcile with the snapshot.
+        // Payments move on after Festschreibung, so the payment state is not part
+        // of the snapshot; a snapshot taken before 0.2.0-rc.4 still carries it
+        // and is compared without it.
         $document->loadMissing('lines');
 
-        if (! hash_equals($contentHash, $this->contentHasher->hash($this->buildSnapshot($document)))) {
+        $frozen = array_diff_key($payload, array_flip(self::PAYMENT_STATE));
+
+        if (! hash_equals($this->contentHasher->hash($frozen), $this->contentHasher->hash($this->buildSnapshot($document)))) {
             return false;
         }
 
@@ -306,31 +339,37 @@ final readonly class GobdInvoiceManager
      * is NOT §14 content, so it may change after Festschreibung; the §14 columns
      * stay frozen. The payment is written to the audit trail.
      */
-    public function recordPayment(Document $document, int $amountMinor, ?Carbon $paidAt = null): Document
+    public function recordPayment(Document $document, int $amountMinor, ?CarbonInterface $paidAt = null): Document
     {
-        throw_if($document->finalized_at === null, GobdInvoiceException::class, "Only a finalized document can receive a payment; [{$document->number}] is not finalized.");
-        throw_if($amountMinor <= 0, GobdInvoiceException::class, 'A payment amount must be positive.');
+        // Atomic: the row is locked and re-read before the payment is added, so
+        // two payments booked at the same moment both count.
+        DB::transaction(function () use ($document, $amountMinor, $paidAt): void {
+            $this->lockAndRefresh($document);
 
-        $paid = (int) $document->paid_total + $amountMinor;
-        $gross = (int) $document->gross_total;
-        $target = $paid >= $gross ? DocumentStatus::Paid : DocumentStatus::PartiallyPaid;
+            throw_if($document->finalized_at === null, GobdInvoiceException::class, "Only a finalized document can receive a payment; [{$document->number}] is not finalized.");
+            throw_if($amountMinor <= 0, GobdInvoiceException::class, 'A payment amount must be positive.');
 
-        throw_unless(
-            $document->status === $target || $document->status->canTransitionTo($target),
-            GobdInvoiceException::class,
-            "Cannot record a payment on a [{$document->status->value}] document.",
-        );
+            $paid = (int) $document->paid_total + $amountMinor;
+            $gross = (int) $document->gross_total;
+            $target = $paid >= $gross ? DocumentStatus::Paid : DocumentStatus::PartiallyPaid;
 
-        $document->paid_total = $paid;
-        $document->amount_due = max(0, $gross - $paid);
-        $document->status = $target;
-        $document->save();
+            throw_unless(
+                $document->status === $target || $document->status->canTransitionTo($target),
+                GobdInvoiceException::class,
+                "Cannot record a payment on a [{$document->status->value}] document.",
+            );
 
-        $this->auditLogger->append($document, 'payment_recorded', [
-            'amount_minor' => $amountMinor,
-            'paid_total' => $paid,
-            'paid_at' => ($paidAt ?? Date::now())->toDateString(),
-        ]);
+            $document->paid_total = $paid;
+            $document->amount_due = max(0, $gross - $paid);
+            $document->status = $target;
+            $document->save();
+
+            $this->auditLogger->append($document, 'payment_recorded', [
+                'amount_minor' => $amountMinor,
+                'paid_total' => $paid,
+                'paid_at' => ($paidAt ?? $this->now())->toDateString(),
+            ]);
+        });
 
         return $document;
     }
@@ -454,6 +493,7 @@ final readonly class GobdInvoiceManager
         $dunningAssessment = $this->dunningInterestCalculator->assess($money, $dunningOptions);
 
         return $this->draft(DocumentType::Mahnung, [
+            ...$this->tenantAttributesOf($document),
             'currency' => $document->currency,
             'series' => DocumentType::Mahnung->defaultSeries(),
             'seller' => $document->seller,
@@ -490,71 +530,63 @@ final readonly class GobdInvoiceManager
      * Cancel a finalized, tax-relevant document by issuing a linked Storno with
      * negated amounts (Storno statt Löschen). The original is never deleted; it
      * moves to the Cancelled status. Returns the new Storno document.
+     *
+     * The Storno's issue date is `$issueDate` when given, else today in the
+     * package time zone (`gobd-invoice.timezone`); it also picks the year of
+     * the Storno number.
      */
-    public function cancel(Document $document, string $reason): Document
+    public function cancel(Document $document, string $reason, DateTimeInterface|string|null $issueDate = null): Document
     {
-        throw_unless($document->isImmutable(), GobdInvoiceException::class, 'Only a finalized, tax-relevant document can be cancelled via Storno.');
-
-        if ($document->documentStatus() === DocumentStatus::Cancelled) {
-            throw new GobdInvoiceException("Document [{$document->number}] is already cancelled.");
-        }
-
-        // IKS segregation of duties (preventive control): may this actor cancel?
-        $this->segregationPolicy->assertCanCancel($document, $this->actorResolver->resolve());
-
-        $document->loadMissing('lines');
-
-        $stornoLines = $document->lines->map(static fn (DocumentLine $documentLine): array => [
-            'description' => $documentLine->description,
-            'quantity' => '1',
-            'unit' => $documentLine->unit,
-            'unit_price_minor' => -$documentLine->line_net_minor,
-            'price_mode' => PriceMode::Net->value,
-            'tax_rate' => $documentLine->tax_rate,
-            'tax_category' => $documentLine->tax_category,
-        ])->values()->all();
-
-        // Flip document-level allowances/charges so the Storno's totals are the
-        // exact negation of the original (an allowance that reduced the base is
-        // reversed by a charge, and vice versa). The accounting-currency rate is
-        // inherited so a non-EUR Storno can still express BT-111.
-        $stornoAdjustments = $this->reversedAdjustments($document);
-
         // Atomic Storno: the new Storno's draft+finalization, the original's flip
         // to Cancelled, and the 'cancelled' audit entry commit together. A failure
         // anywhere rolls the whole correction back, so there can be no orphan
-        // Storno without its cancelled original (Storno statt Löschen).
+        // Storno without its cancelled original (Storno statt Löschen). The
+        // original is locked and re-checked first, so of two cancellations at
+        // the same moment exactly one issues a Storno.
         // The Storno reverses the supply (lines + allowances/charges), not the
         // payment: the original's paid amount (BT-113) and Skonto terms are a
         // payment-reconciliation concern and are deliberately not carried over,
         // so the Storno is a full credit (amount due = −gross) reconciled against
         // any prior payment outside this document.
-        $storno = DB::transaction(function () use ($document, $reason, $stornoLines, $stornoAdjustments): Document {
+        $storno = DB::transaction(function () use ($document, $reason, $issueDate): Document {
+            $this->lockForCancellation($document);
+
+            $document->loadMissing('lines');
+
+            $stornoLines = $document->lines->map(fn (DocumentLine $documentLine): array => [
+                ...$this->passthroughValuesOf($documentLine),
+                'description' => $documentLine->description,
+                'quantity' => '1',
+                'unit' => $documentLine->unit,
+                'unit_price_minor' => -$documentLine->line_net_minor,
+                'price_mode' => PriceMode::Net->value,
+                'tax_rate' => $documentLine->tax_rate,
+                'tax_category' => $documentLine->tax_category,
+            ])->values()->all();
+
+            // Flip document-level allowances/charges so the Storno's totals are the
+            // exact negation of the original (an allowance that reduced the base is
+            // reversed by a charge, and vice versa). The accounting-currency rate is
+            // inherited so a non-EUR Storno can still express BT-111.
             $storno = $this->draft(DocumentType::Storno, [
+                ...$this->tenantAttributesOf($document),
                 'currency' => $document->currency,
                 'series' => DocumentType::Storno->defaultSeries(),
+                'issue_date' => $issueDate,
                 'service_date' => $document->service_date,
                 'service_period_start' => $document->service_period_start,
                 'service_period_end' => $document->service_period_end,
                 'is_financial_sector' => $document->is_financial_sector,
-                'adjustments' => $stornoAdjustments,
+                'adjustments' => $this->reversedAdjustments($document),
                 'accounting_rate' => $document->accounting_rate,
                 'seller' => $document->seller,
                 'buyer' => $document->buyer,
+                'source_document_id' => $document->id,
                 'meta' => ['reason' => $reason, 'storno_of' => $document->number],
             ], $stornoLines);
 
-            $storno->source_document_id = $document->id;
-            $storno->save();
             $this->performFinalize($storno);
-
-            $document->status = DocumentStatus::Cancelled;
-            $document->save();
-
-            $this->auditLogger->append($document, 'cancelled', [
-                'storno' => $storno->number,
-                'reason' => $reason,
-            ]);
+            $this->markCancelled($document, $storno, $reason);
 
             return $storno;
         });
@@ -581,7 +613,8 @@ final readonly class GobdInvoiceManager
 
         $document->loadMissing('lines');
 
-        $lines = $document->lines->map(static fn (DocumentLine $documentLine): array => [
+        $lines = $document->lines->map(fn (DocumentLine $documentLine): array => [
+            ...$this->passthroughValuesOf($documentLine),
             'description' => $documentLine->description,
             'quantity' => $documentLine->quantity,
             'unit' => $documentLine->unit,
@@ -612,6 +645,7 @@ final readonly class GobdInvoiceManager
         // advance-deduction cross-order guard and the DocumentDrafted event.
         $attributes['currency'] = $document->currency;
         $attributes['source_document_id'] = $document->id;
+        $attributes = [...$attributes, ...$this->tenantAttributesOf($document)];
 
         if (! array_key_exists('documentable', $overrides) && $document->documentable_type !== null && $document->documentable_id !== null) {
             $attributes['documentable_type'] = $document->documentable_type;
@@ -629,22 +663,24 @@ final readonly class GobdInvoiceManager
 
         $document->loadMissing('lines');
 
-        $issuedAt = $document->issue_date ?? Date::now();
+        $issuedAt = $document->issue_date ?? $this->now();
         $series = (string) ($document->series ?? $document->type->defaultSeries());
 
         // A gap-tolerant generator allocates the number up front in its own short
         // lock (high throughput); the gapless default defers allocation into the
         // transaction below so a rollback un-burns it.
+        $tenant = $document->tenantKey();
+
         $number = $this->numberSequenceGenerator->allocatesWithinTransaction()
             ? null
-            : $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
+            : $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year, $tenant);
 
         // Atomic Festschreibung: number allocation (when gapless), content hash,
         // the document save and the audit entry commit together or not at all, so
         // a failed finalize never strands a number-bearing draft or an audit-less
         // finalized document. Keep this transaction tight: slow work (PDF /
         // e-invoice rendering, M4/M5) must run AFTER finalize, never inside it.
-        DB::transaction(function () use ($document, $issuedAt, $series, $number): void {
+        DB::transaction(function () use ($document, $issuedAt, $series, $number, $tenant): void {
             $documentTotals = $this->documentTotalsCalculator->calculate($this->totalsInputFor($document));
             $this->applyTotals($document, $documentTotals);
 
@@ -660,7 +696,7 @@ final readonly class GobdInvoiceManager
             // toggle above (which only relaxes §14 Abs. 4 completeness).
             $this->assertAdvancesDeducted($document);
 
-            $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year);
+            $number ??= $this->numberSequenceGenerator->next($document->type, $series, $issuedAt->year, $tenant);
 
             $document->number = (string) $number;
             $document->series = $number->series;
@@ -686,6 +722,50 @@ final readonly class GobdInvoiceManager
         event(new DocumentFinalized($document));
 
         return $document;
+    }
+
+    /**
+     * Lock the document's row for the rest of the transaction and load its
+     * current state into the given instance, so a decision never rests on a
+     * stale copy. The re-read would overwrite unsaved changes on the
+     * instance, so an instance that carries any is refused instead.
+     */
+    private function lockAndRefresh(Document $document): void
+    {
+        $unsaved = array_keys($document->getDirty());
+
+        throw_if($unsaved !== [], GobdInvoiceException::class, "Document [{$document->number}] has unsaved changes to [".implode(', ', $unsaved).']; save or discard them first.');
+
+        $current = $document->newQueryWithoutScopes()->whereKey($document->getKey())->lockForUpdate()->firstOrFail();
+
+        $document->setRawAttributes($current->getAttributes(), true);
+    }
+
+    /**
+     * Lock the document to be cancelled and re-check, under the lock, that it
+     * may be cancelled — by this actor, and not a second time.
+     */
+    private function lockForCancellation(Document $document): void
+    {
+        $this->lockAndRefresh($document);
+
+        throw_unless($document->isImmutable(), GobdInvoiceException::class, 'Only a finalized, tax-relevant document can be cancelled via Storno.');
+        throw_if($document->documentStatus() === DocumentStatus::Cancelled, GobdInvoiceException::class, "Document [{$document->number}] is already cancelled.");
+        throw_unless($document->status->canTransitionTo(DocumentStatus::Cancelled), InvalidStatusTransitionException::between($document->status, DocumentStatus::Cancelled));
+
+        // IKS segregation of duties (preventive control): may this actor cancel?
+        $this->segregationPolicy->assertCanCancel($document, $this->actorResolver->resolve());
+    }
+
+    private function markCancelled(Document $document, Document $storno, ?string $reason): void
+    {
+        $document->status = DocumentStatus::Cancelled;
+        $document->save();
+
+        $this->auditLogger->append($document, 'cancelled', [
+            'storno' => $storno->number,
+            'reason' => $reason,
+        ]);
     }
 
     private function summarizeViolations(ValidationResult $validationResult): string
@@ -982,9 +1062,9 @@ final readonly class GobdInvoiceManager
     }
 
     /**
-     * @return array{0: string, 1: Carbon}
+     * @return array{0: string, 1: CarbonInterface}
      */
-    private function retentionFor(Document $document, Carbon $issuedAt): array
+    private function retentionFor(Document $document, CarbonInterface $issuedAt): array
     {
         $financial = $document->is_financial_sector
             || Config::boolean('gobd-invoice.retention.financial_sector', false);
@@ -1038,9 +1118,7 @@ final readonly class GobdInvoiceManager
             'net_total' => $document->net_total,
             'vat_total' => $document->vat_total,
             'gross_total' => $document->gross_total,
-            'paid_total' => $document->paid_total,
             'rounding_total' => $document->rounding_total,
-            'amount_due' => $document->amount_due,
             'vat_accounting_total' => $document->vat_accounting_total,
             'advances_net_total' => $document->advances_net_total,
             'advances_vat_total' => $document->advances_vat_total,
@@ -1101,28 +1179,32 @@ final readonly class GobdInvoiceManager
      * (non-cancelled) Abschlagsrechnung, in a different currency, or — when the
      * final invoice is linked to an order — belongs to a different order.
      *
+     * In multi-tenant mode only advances of the final invoice's own tenant are
+     * found — an advance of another tenant reads as "not found".
+     *
      * @return array<int, array<string, mixed>>|null
      */
-    private function resolveAdvanceDeductions(mixed $deducts, string $currency, ?string $documentableType, ?int $documentableId): ?array
+    private function resolveAdvanceDeductions(mixed $deducts, string $currency, Document $document): ?array
     {
         if (! is_array($deducts) || $deducts === []) {
             return null;
         }
 
-        /** @var class-string<Document> $model */
-        $model = config('gobd-invoice.models.document', Document::class);
+        $documentableType = $document->documentable_type;
+        $documentableId = $document->documentable_id;
+        $keyType = KeyType::configured();
 
         $specs = [];
         $seen = [];
 
         foreach ($deducts as $deduct) {
-            throw_unless(is_int($deduct) || (is_string($deduct) && ctype_digit($deduct)), GobdInvoiceException::class, 'A deducted advance must be referenced by an integer document id.');
-            $id = (int) $deduct;
+            throw_unless($keyType->accepts($deduct), GobdInvoiceException::class, "A deducted advance must be referenced by a {$keyType->value} document id.");
+            $id = $keyType->normalize($deduct, 'deducts');
 
             throw_if(in_array($id, $seen, true), GobdInvoiceException::class, "Advance [{$id}] is deducted more than once.");
             $seen[] = $id;
 
-            $advance = $model::query()->find($id);
+            $advance = $this->documentsOfTenant($document)->find($id);
 
             throw_unless($advance instanceof Document, GobdInvoiceException::class, "Deducted advance [{$id}] was not found.");
             throw_unless($advance->type->isAdvanceInvoice(), GobdInvoiceException::class, "Document [{$id}] is not an advance invoice (Abschlags-/Anzahlungsrechnung) and cannot be deducted in a Schlussrechnung.");
@@ -1167,19 +1249,17 @@ final readonly class GobdInvoiceManager
             return;
         }
 
+        $keyType = KeyType::configured();
         $deductedIds = [];
         foreach ($document->advance_deductions ?? [] as $spec) {
-            if (isset($spec['document_id']) && is_numeric($spec['document_id'])) {
-                $deductedIds[] = (int) $spec['document_id'];
+            if (isset($spec['document_id']) && $keyType->accepts($spec['document_id'])) {
+                $deductedIds[] = $keyType->normalize($spec['document_id'], 'document_id');
             }
         }
 
-        /** @var class-string<Document> $model */
-        $model = config('gobd-invoice.models.document', Document::class);
-
         // A cancelled (Storno'd) advance had its VAT reversed by its Storno, so it
         // must NOT be deducted and does not count as undeducted here.
-        $hasUndeducted = $model::query()
+        $hasUndeducted = $this->documentsOfTenant($document)
             ->where('documentable_type', $document->documentable_type)
             ->where('documentable_id', $document->documentable_id)
             ->whereIn('type', DocumentType::advanceInvoiceValues())
@@ -1191,7 +1271,131 @@ final readonly class GobdInvoiceManager
         throw_if($hasUndeducted, DocumentContentException::withViolations($document->number, ['undeducted_advances']));
     }
 
-    private function parseDate(mixed $value): ?Carbon
+    /**
+     * The documents a given document may relate to: all of them single-tenant,
+     * only those of its own tenant in multi-tenant mode.
+     *
+     * @return Builder<Document>
+     */
+    private function documentsOfTenant(Document $document): Builder
+    {
+        /** @var class-string<Document> $model */
+        $model = config('gobd-invoice.models.document', Document::class);
+
+        $query = $model::query();
+        $column = Tenancy::column();
+
+        if ($column !== null) {
+            $query->where($column, $document->tenantKey());
+        }
+
+        return $query;
+    }
+
+    /**
+     * In multi-tenant mode a document belongs to exactly one tenant, handed in
+     * by the host with the draft attributes (from its own tenant context, never
+     * from request input). Without it the draft is refused.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function assignTenant(Document $document, array $attributes): void
+    {
+        $column = Tenancy::column();
+
+        if ($column === null) {
+            return;
+        }
+
+        $tenant = $attributes[$column] ?? null;
+
+        throw_if($tenant === null, GobdInvoiceException::class, "gobd-invoice is multi-tenant; draft() needs the tenant as the [{$column}] attribute.");
+
+        $document->setAttribute($column, KeyType::configured()->normalize($tenant, $column));
+    }
+
+    /**
+     * The tenant attribute a follow-up document (Storno, conversion, Mahnung)
+     * inherits from its source document.
+     *
+     * @return array<string, int|string>
+     */
+    private function tenantAttributesOf(Document $document): array
+    {
+        return Tenancy::attributesFor(Tenancy::isEnabled() ? $document->tenantKey() : null);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $lines
+     */
+    private function createLines(Document $document, array $lines, string $currency): void
+    {
+        $tenant = $this->tenantAttributesOf($document);
+
+        foreach (array_values($lines) as $index => $line) {
+            $documentLine = $document->lines()->make([
+                ...$this->passthroughValues($line),
+                ...$this->buildLineAttributes($index + 1, $line, $currency),
+            ]);
+
+            // Set, never mass-assigned: a host may keep its tenant column guarded.
+            foreach ($tenant as $column => $value) {
+                $documentLine->setAttribute($column, $value);
+            }
+
+            $documentLine->save();
+        }
+    }
+
+    /**
+     * The host-owned line attributes ({@see DocumentLine::passthroughAttributes()})
+     * present in a line input.
+     *
+     * @param  array<string, mixed>  $line
+     * @return array<string, mixed>
+     */
+    private function passthroughValues(array $line): array
+    {
+        return array_intersect_key($line, array_flip($this->lineModel()::passthroughAttributes()));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function passthroughValuesOf(DocumentLine $documentLine): array
+    {
+        $values = [];
+
+        foreach ($this->lineModel()::passthroughAttributes() as $attribute) {
+            $values[$attribute] = $documentLine->getAttribute($attribute);
+        }
+
+        return $values;
+    }
+
+    /**
+     * @return class-string<DocumentLine>
+     */
+    private function lineModel(): string
+    {
+        /** @var class-string<DocumentLine> $model */
+        $model = config('gobd-invoice.models.document_line', DocumentLine::class);
+
+        return $model;
+    }
+
+    /**
+     * The current moment in the package time zone, so its calendar day is the
+     * host's business day rather than the day of the server clock.
+     */
+    private function now(): CarbonInterface
+    {
+        $timeZone = config('gobd-invoice.timezone');
+
+        return Date::now(is_string($timeZone) && $timeZone !== '' ? $timeZone : Config::string('app.timezone', 'UTC'));
+    }
+
+    private function parseDate(mixed $value): ?CarbonInterface
     {
         if ($value === null) {
             return null;

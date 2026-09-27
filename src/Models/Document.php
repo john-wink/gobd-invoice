@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Attributes\UseFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -12,13 +15,17 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Database\Factories\DocumentFactory;
+use JohnWink\GobdInvoice\Database\PostgresGuards;
+use JohnWink\GobdInvoice\Database\Tenancy;
 use JohnWink\GobdInvoice\Enums\DocumentStatus;
 use JohnWink\GobdInvoice\Enums\DocumentType;
+use JohnWink\GobdInvoice\Enums\KeyType;
 use JohnWink\GobdInvoice\Exceptions\DocumentIsImmutableException;
+use JohnWink\GobdInvoice\Exceptions\InvalidStatusTransitionException;
+use JohnWink\GobdInvoice\Models\Concerns\HasConfiguredKey;
 use Override;
 
 /**
@@ -27,7 +34,7 @@ use Override;
  * Once finalized (festgeschrieben) the tax-relevant columns are immutable
  * (GoBD Unveränderbarkeit) — the model enforces this with model-event guards.
  *
- * @property int $id
+ * @property int|string $id
  * @property DocumentType $type
  * @property DocumentStatus $status
  * @property string|null $created_by
@@ -55,34 +62,38 @@ use Override;
  * @property array<int, array<string, mixed>>|null $advance_deductions
  * @property array<string, mixed>|null $seller
  * @property array<string, mixed>|null $buyer
- * @property Carbon|null $issue_date
- * @property Carbon|null $service_date
- * @property Carbon|null $service_period_start
- * @property Carbon|null $service_period_end
- * @property Carbon|null $finalized_at
+ * @property CarbonInterface|null $issue_date
+ * @property CarbonInterface|null $service_date
+ * @property CarbonInterface|null $service_period_start
+ * @property CarbonInterface|null $service_period_end
+ * @property CarbonInterface|null $finalized_at
  * @property string|null $content_hash
  * @property array<string, mixed>|null $finalized_payload
- * @property int|null $source_document_id
+ * @property int|string|null $source_document_id
  * @property string|null $documentable_type
- * @property int|null $documentable_id
+ * @property int|string|null $documentable_id
  * @property string $retention_class
- * @property Carbon|null $retention_until
+ * @property CarbonInterface|null $retention_until
  * @property bool $is_financial_sector
  * @property array<string, mixed>|null $meta
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
+ * @property CarbonInterface|null $created_at
+ * @property CarbonInterface|null $updated_at
  * @property-read Collection<int, DocumentLine> $lines
  */
 #[UseFactory(DocumentFactory::class)]
+#[Unguarded]
 class Document extends Model implements InvoiceDocument
 {
+    use HasConfiguredKey;
+
     /** @use HasFactory<DocumentFactory> */
     use HasFactory;
 
     /**
      * Tax-relevant columns that must not change after finalization. Lifecycle
      * columns (status, payment fields) are intentionally excluded so a
-     * finalized document can still move to Sent/Paid/Overdue.
+     * finalized document can still move to Sent/Paid/Overdue. The PostgreSQL
+     * guard trigger enforces the same list ({@see PostgresGuards}).
      *
      * @var list<string>
      */
@@ -92,16 +103,19 @@ class Document extends Model implements InvoiceDocument
         'net_total', 'vat_total', 'gross_total',
         // NOTE: paid_total, amount_due and status are intentionally NOT immutable —
         // payment tracking legitimately changes after Festschreibung (§14 content
-        // stays frozen; the payment ledger and status lifecycle move on).
+        // stays frozen; the payment ledger and status lifecycle move on). `meta`
+        // stays writable too: it is host bookkeeping (export markers, dunning
+        // notes), neither §14 content nor part of the hashed snapshot.
         'rounding_total', 'vat_accounting_total',
         'advances_net_total', 'advances_vat_total',
         'tax_breakdown', 'document_adjustments', 'payment_terms', 'accounting_rate',
         'advance_deductions', 'seller', 'buyer',
         'issue_date', 'service_date', 'service_period_start', 'service_period_end', 'finalized_at', 'content_hash', 'finalized_payload',
+        // The §147 AO retention window is fixed at Festschreibung, and so is the
+        // host record (order, customer) the document was issued for.
+        'retention_class', 'retention_until', 'is_financial_sector',
+        'documentable_type', 'documentable_id',
     ];
-
-    /** @var list<string> */
-    protected $guarded = [];
 
     public function __construct(array $attributes = [])
     {
@@ -110,9 +124,26 @@ class Document extends Model implements InvoiceDocument
         $this->setTable(Config::string('gobd-invoice.table_names.documents', 'gobd_documents'));
     }
 
+    /**
+     * @return list<string>
+     */
+    public static function immutableColumns(): array
+    {
+        return self::IMMUTABLE_COLUMNS;
+    }
+
     public function documentType(): DocumentType
     {
         return $this->type;
+    }
+
+    /**
+     * The tenant this document belongs to, or null when the package runs
+     * single-tenant ({@see Tenancy}).
+     */
+    public function tenantKey(): int|string|null
+    {
+        return Tenancy::of($this);
     }
 
     public function documentStatus(): DocumentStatus
@@ -124,12 +155,12 @@ class Document extends Model implements InvoiceDocument
      * The payment due date (virtual): the issue date plus the payment-terms net
      * days, falling back to the issue date when no term is set.
      *
-     * @return Attribute<Carbon|null, never>
+     * @return Attribute<CarbonInterface|null, never>
      */
     protected function dueDate(): Attribute
     {
-        return Attribute::get(function (): ?Carbon {
-            if (! $this->issue_date instanceof Carbon) {
+        return Attribute::get(function (): ?CarbonInterface {
+            if (! $this->issue_date instanceof CarbonInterface) {
                 return null;
             }
 
@@ -195,6 +226,10 @@ class Document extends Model implements InvoiceDocument
     protected static function booted(): void
     {
         static::updating(static function (self $document): void {
+            Tenancy::guardAgainstTenantChange($document);
+            $document->guardStatusTransition();
+            $document->guardStornoFinalization();
+
             if ($document->getOriginal('finalized_at') === null) {
                 return; // still a draft (or being finalized now): editing is allowed
             }
@@ -228,6 +263,67 @@ class Document extends Model implements InvoiceDocument
     }
 
     /**
+     * A status only moves along {@see DocumentStatus::allowedTransitions()};
+     * a festgeschriebenes tax-relevant document becomes cancelled only once a
+     * festgeschriebener Storno references it.
+     */
+    private function guardStatusTransition(): void
+    {
+        $original = $this->getRawOriginal('status');
+        $from = is_string($original) ? DocumentStatus::tryFrom($original) : null;
+
+        if (! $this->isDirty('status') || ! $from instanceof DocumentStatus) {
+            return;
+        }
+
+        throw_unless($from->canTransitionTo($this->status), InvalidStatusTransitionException::between($from, $this->status));
+
+        if ($this->status === DocumentStatus::Cancelled && $this->isImmutable()) {
+            $stornos = $this->relatedDocuments()
+                ->where('source_document_id', $this->getKey())
+                ->where('type', DocumentType::Storno->value)
+                ->whereNotNull('finalized_at');
+
+            throw_unless($stornos->exists(), InvalidStatusTransitionException::cancelledWithoutStorno((string) $this->number));
+        }
+    }
+
+    /**
+     * A Storno is festgeschrieben only against the festgeschriebene document
+     * of its own tenant that it cancels.
+     */
+    private function guardStornoFinalization(): void
+    {
+        if ($this->type !== DocumentType::Storno || $this->finalized_at === null || $this->getOriginal('finalized_at') !== null) {
+            return;
+        }
+
+        $source = $this->source_document_id === null ? null : $this->relatedDocuments()
+            ->whereKey($this->source_document_id)
+            ->whereNotNull('finalized_at');
+
+        throw_unless($source?->exists() === true, InvalidStatusTransitionException::stornoWithoutSource());
+    }
+
+    /**
+     * The documents of this document's tenant (all of them single-tenant),
+     * independent of any host scope.
+     *
+     * @return Builder<static>
+     */
+    private function relatedDocuments(): Builder
+    {
+        $builder = $this->newQueryWithoutScopes();
+        $column = Tenancy::column();
+
+        if ($column !== null) {
+            $builder->where($column, $this->tenantKey());
+        }
+
+        return $builder;
+    }
+
+    /**
      * @return array<string, string>
      */
     #[Override]
@@ -236,6 +332,7 @@ class Document extends Model implements InvoiceDocument
         return [
             'type' => DocumentType::class,
             'status' => DocumentStatus::class,
+            'source_document_id' => KeyType::configured()->cast(),
             'year' => 'integer',
             'sequence' => 'integer',
             'line_net_total' => 'integer',

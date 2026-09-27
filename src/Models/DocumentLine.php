@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace JohnWink\GobdInvoice\Models;
 
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Attributes\Unguarded;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use JohnWink\GobdInvoice\Contracts\TaxableLine;
+use JohnWink\GobdInvoice\Database\Tenancy;
+use JohnWink\GobdInvoice\Enums\KeyType;
 use JohnWink\GobdInvoice\Enums\TaxCategory;
 use JohnWink\GobdInvoice\Exceptions\DocumentIsImmutableException;
+use JohnWink\GobdInvoice\Models\Concerns\HasConfiguredKey;
 use JohnWink\GobdInvoice\ValueObjects\Money;
 use JohnWink\GobdInvoice\ValueObjects\TaxRate;
 use Override;
@@ -19,8 +23,8 @@ use Override;
  * A single position on a document. The net amount is the already-computed line
  * total (unit price × quantity − line discount), stored in minor units.
  *
- * @property int $id
- * @property int $document_id
+ * @property int|string $id
+ * @property int|string $document_id
  * @property int $position
  * @property string $description
  * @property string $quantity
@@ -33,19 +37,32 @@ use Override;
  * @property string $tax_rate
  * @property string $tax_category
  * @property string $currency
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
+ * @property CarbonInterface|null $created_at
+ * @property CarbonInterface|null $updated_at
  */
+#[Unguarded]
 class DocumentLine extends Model implements TaxableLine
 {
-    /** @var list<string> */
-    protected $guarded = [];
+    use HasConfiguredKey;
 
     public function __construct(array $attributes = [])
     {
         parent::__construct($attributes);
 
         $this->setTable(Config::string('gobd-invoice.table_names.lines', 'gobd_document_lines'));
+    }
+
+    /**
+     * Host-owned line columns that draft() stores from the line input and that
+     * convert() and cancel() carry forward (e.g. a catalogue reference or the
+     * moment a price was frozen). The package computes every other column
+     * itself; a host subclass lists its extra columns here.
+     *
+     * @return list<string>
+     */
+    public static function passthroughAttributes(): array
+    {
+        return [];
     }
 
     public function netAmount(): Money
@@ -66,7 +83,7 @@ class DocumentLine extends Model implements TaxableLine
         /** @var class-string<Document> $model */
         $model = config('gobd-invoice.models.document', Document::class);
 
-        return $this->belongsTo($model);
+        return $this->belongsTo($model, 'document_id');
     }
 
     /**
@@ -78,6 +95,7 @@ class DocumentLine extends Model implements TaxableLine
     protected static function booted(): void
     {
         static::updating(static function (self $documentLine): void {
+            Tenancy::guardAgainstTenantChange($documentLine);
             $documentLine->guardAgainstImmutableParent();
         });
 
@@ -93,7 +111,7 @@ class DocumentLine extends Model implements TaxableLine
     protected function casts(): array
     {
         return [
-            'document_id' => 'integer',
+            'document_id' => KeyType::configured()->cast(),
             'position' => 'integer',
             'unit_price_minor' => 'integer',
             'discount_minor' => 'integer',
@@ -102,11 +120,20 @@ class DocumentLine extends Model implements TaxableLine
         ];
     }
 
+    /**
+     * The document is read without host scopes, like the Storno checks of
+     * {@see Document}, and a document that still cannot be read (row level
+     * security, or no document at all) counts as finalized.
+     */
     private function guardAgainstImmutableParent(): void
     {
-        $document = $this->document;
+        $document = $this->document()->withoutGlobalScopes()->first();
 
-        if ($document !== null && $document->isImmutable()) {
+        if ($document === null) {
+            throw DocumentIsImmutableException::forUnreadableDocument($this->document_id);
+        }
+
+        if ($document->isImmutable()) {
             throw DocumentIsImmutableException::forFinalizedDocument((string) $document->number);
         }
     }

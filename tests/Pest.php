@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use JohnWink\GobdInvoice\Audit\AppendOnlyAuditLogger;
 use JohnWink\GobdInvoice\Audit\ContentHasher;
 use JohnWink\GobdInvoice\Contracts\AuditLogger;
@@ -10,10 +12,13 @@ use JohnWink\GobdInvoice\Contracts\InvoiceDocument;
 use JohnWink\GobdInvoice\Enums\DocumentType;
 use JohnWink\GobdInvoice\Facades\GobdInvoice;
 use JohnWink\GobdInvoice\GobdInvoiceManager;
+use JohnWink\GobdInvoice\Models\AuditLogEntry;
 use JohnWink\GobdInvoice\Models\Document;
+use JohnWink\GobdInvoice\Tests\TenantTestCase;
 use JohnWink\GobdInvoice\Tests\TestCase;
 
 pest()->extend(TestCase::class)->in('Feature');
+pest()->extend(TenantTestCase::class)->in('Tenancy');
 
 /**
  * A minimal single-line payload for drafting an invoice in tests.
@@ -78,4 +83,168 @@ function restoreRealAuditLogger(): void
     app()->forgetInstance(GobdInvoiceManager::class);
     GobdInvoice::clearResolvedInstance(GobdInvoiceManager::class);
     app()->bind(AuditLogger::class, AppendOnlyAuditLogger::class);
+}
+
+/**
+ * A fresh tenant key, shaped like the team ids of a UUID host.
+ */
+function newTenant(): string
+{
+    return (string) Str::uuid7();
+}
+
+/**
+ * Draft a document for the given tenant in the multi-tenant configuration.
+ *
+ * @param  array<string, mixed>  $attributes
+ * @param  array<int, array<string, mixed>>|null  $lines
+ */
+function tenantDraft(string $tenant, DocumentType $documentType = DocumentType::Rechnung, array $attributes = [], ?array $lines = null): Document
+{
+    return GobdInvoice::draft($documentType, [TenantTestCase::TENANT_COLUMN => $tenant, ...$attributes], $lines ?? lineSet());
+}
+
+dataset('database roles', [
+    'table owner' => 'owner',
+    'application role' => 'application',
+]);
+
+/**
+ * Run database work as the owner of the package tables (the connection user)
+ * or as a plain application role that only holds DML privileges — the role a
+ * production host usually connects with. PostgreSQL only.
+ *
+ * @template TResult
+ *
+ * @param  Closure(): TResult  $work
+ * @return TResult
+ */
+function asDatabaseRole(string $role, Closure $work): mixed
+{
+    if ($role === 'owner') {
+        return $work();
+    }
+
+    DB::statement(<<<'SQL'
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'gobd_app') THEN
+                CREATE ROLE gobd_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            END IF;
+        END
+        $$
+        SQL);
+    DB::statement('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gobd_app');
+    DB::statement('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gobd_app');
+    DB::statement('SET ROLE gobd_app');
+
+    try {
+        return $work();
+    } finally {
+        DB::statement('RESET ROLE');
+    }
+}
+
+dataset('row security roles', [
+    'table owner under FORCE ROW LEVEL SECURITY' => 'owner',
+    'application role' => 'application',
+]);
+
+/**
+ * Run database work as a role that sees only the documents of the tenant in
+ * the session setting `gobd.tenant` — the row level security a host such as
+ * craftplan-next puts on the package tables. The role has no BYPASSRLS; as
+ * 'owner' it also owns the documents table, which FORCE ROW LEVEL SECURITY
+ * keeps under the policy. PostgreSQL only.
+ *
+ * @template TResult
+ *
+ * @param  Closure(): TResult  $work
+ * @return TResult
+ */
+function underTenantRowSecurity(string $role, Closure $work): mixed
+{
+    DB::statement(<<<'SQL'
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'gobd_tenant_app') THEN
+                CREATE ROLE gobd_tenant_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            END IF;
+        END
+        $$
+        SQL);
+    DB::statement('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gobd_tenant_app');
+    DB::statement('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO gobd_tenant_app');
+    DB::statement('ALTER TABLE gobd_documents ENABLE ROW LEVEL SECURITY');
+    DB::statement('ALTER TABLE gobd_documents FORCE ROW LEVEL SECURITY');
+    DB::statement('DROP POLICY IF EXISTS gobd_documents_of_tenant ON gobd_documents');
+    DB::statement(<<<'SQL'
+        CREATE POLICY gobd_documents_of_tenant ON gobd_documents
+            USING (team_id::text = current_setting('gobd.tenant', true))
+            WITH CHECK (team_id::text = current_setting('gobd.tenant', true))
+        SQL);
+
+    if ($role === 'owner') {
+        DB::statement('ALTER TABLE gobd_documents OWNER TO gobd_tenant_app');
+    }
+
+    DB::statement('SET ROLE gobd_tenant_app');
+
+    try {
+        return $work();
+    } finally {
+        DB::statement('RESET ROLE');
+        enterTenantContext(null);
+    }
+}
+
+/**
+ * Set (or clear, with null) the tenant the session sees under
+ * {@see underTenantRowSecurity()}, for the session rather than the
+ * transaction — the way a host's runFor() sets and resets its context.
+ */
+function enterTenantContext(?string $tenant): void
+{
+    DB::select("SELECT set_config('gobd.tenant', ?, false)", [$tenant ?? '']);
+}
+
+/**
+ * The chain ends of a document's audit trail: entries no other entry points
+ * to. An intact trail has exactly one.
+ *
+ * @return list<string|null>
+ */
+function auditChainEnds(int|string $documentId): array
+{
+    $entries = AuditLogEntry::query()->where('document_id', $documentId)->get();
+    $referenced = $entries->pluck('previous_hash')->filter()->all();
+
+    return $entries->reject(static fn (AuditLogEntry $entry): bool => in_array($entry->content_hash, $referenced, true))
+        ->pluck('content_hash')
+        ->values()
+        ->all();
+}
+
+/**
+ * Simulate an operator with direct database access who deliberately bypasses
+ * the PostgreSQL guard triggers (superuser: session_replication_role). Used to
+ * prove that verify() still detects tampering the guards could not prevent.
+ *
+ * @param  Closure(): void  $tampering
+ */
+function tamperBypassingDatabaseGuards(Closure $tampering): void
+{
+    if (! TestCase::usesPostgres()) {
+        $tampering();
+
+        return;
+    }
+
+    DB::statement('SET session_replication_role = replica');
+
+    try {
+        $tampering();
+    } finally {
+        DB::statement('SET session_replication_role = DEFAULT');
+    }
 }
