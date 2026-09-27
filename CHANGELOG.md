@@ -8,6 +8,59 @@ Pre-1.0: the public API may still change between minor versions.
 
 ## [Unreleased]
 
+### Fixed (0.2.0-rc.5)
+
+- **The Storno guard fails closed under row level security.** The deferred
+  check `gobd_documents_storno_guard()` re-read its own row and let the write
+  pass when it could not see it. A host that resets its tenant context before
+  the commit (or switches it to another team) hid that row, and all three
+  forbidden writes went through: a festgeschriebenes document cancelled
+  without a Storno, a Storno without a source, and a Storno whose original is
+  not cancelled. The check now takes the row from the trigger (`NEW`) and
+  reads only the partner row, as a requirement: a partner the session cannot
+  see counts as missing and the commit fails. Tested under FORCE ROW LEVEL
+  SECURITY as table owner and as an application role without BYPASSRLS, with
+  the context cleared and switched to another team before the commit.
+  No `SECURITY DEFINER`: under FORCE ROW LEVEL SECURITY the table owner sees
+  no more than the session, and a package cannot grant BYPASSRLS.
+- **A Storno is dated on the business day.** `cancel()` accepts the issue date
+  as a third argument (`DateTimeInterface|string|null`). Without it, the
+  Storno — like any document finalized without an issue date — is dated today
+  in the package time zone, which also picks the year of its number. At
+  2026-12-31 23:30 UTC with `Europe/Berlin` that is 2027-01-01 and a number of
+  2027, no longer 2026-12-31.
+- **A payment without date is booked on the business day.** `recordPayment()`
+  without `$paidAt` writes today in the package time zone as `paid_at`, not
+  the UTC day. An explicit `$paidAt` is kept as given.
+- **Unsaved changes are no longer dropped.** `recordPayment()` and `cancel()`
+  lock and re-read the document. On an instance with unsaved changes that
+  re-read overwrote them silently; they now throw a `GobdInvoiceException`
+  naming the changed attributes and leave the instance as it was.
+
+### Added (0.2.0-rc.5)
+
+- Config key `gobd-invoice.timezone` (default `null` = `app.timezone`): the
+  time zone of the business day for issue dates and payment dates.
+
+### Upgrading from 0.2.0-rc.4
+
+1. PostgreSQL: call `PostgresGuards::protectDocuments('gobd_documents')` again
+   in a host migration. It replaces the function
+   `gobd_documents_storno_guard()` (new body, same name and signature) and
+   recreates its constraint trigger `gobd_documents_storno_guard`
+   (`AFTER INSERT OR UPDATE`, `DEFERRABLE INITIALLY DEFERRED`, unchanged
+   definition); `gobd_documents_guard()`, `gobd_documents_status_guard()`,
+   `gobd_documents_refuse_truncate()` and their triggers are recreated
+   unchanged. No new function, trigger, table or column.
+2. Row level security: commit a Storno and its original while the session
+   still sees both rows. A host that resets its tenant context before the
+   commit now gets an exception at commit instead of a silent pass, also for
+   a correct Storno.
+3. Set `gobd-invoice.timezone` in the published config when the business day
+   is not the app time zone (e.g. `'Europe/Berlin'` on a UTC app).
+4. Pass the issue date to `cancel()` where the host already knows it, and save
+   or discard changes on a document before `recordPayment()` or `cancel()`.
+
 ### Fixed (0.2.0-rc.4)
 
 - **One Storno per document, also under concurrency.** `cancel()` locks the
